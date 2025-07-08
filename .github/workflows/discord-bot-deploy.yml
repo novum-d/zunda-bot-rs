@@ -1,0 +1,21 @@
+name: discord-bot-deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: create secrets
+        run: echo 'DISCORD_TOKEN = "${{ secrets.BOT_TOKEN }}"' > Secrets.toml
+      - name: Install cargo-shuttle
+        run: cargo install cargo-shuttle
+      - name: Shuttle login
+        run: cargo shuttle login --api-key ${{ secrets.SHUTTLE_API_KEY }}
+      - name: Shuttle deploy
+        run: cargo shuttle deploy
