@@ -17,5 +17,7 @@ jobs:
         run: cargo install cargo-shuttle
       - name: Shuttle login
         run: cargo shuttle login --api-key ${{ secrets.SHUTTLE_API_KEY }}
+      - name: Shuttle login
+        run: cargo shuttle project link zunda-bot-rs
       - name: Shuttle deploy
         run: cargo shuttle deploy
