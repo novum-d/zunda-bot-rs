@@ -3,7 +3,7 @@
 
 # zunda-bot-rs
 
-![zunda-bot-rs logo][logo]
+<img src="https://github.com/user-attachments/assets/47b6028f-fea4-4aae-b615-aff4f8e1c197" width="300" />
 
 Rust製のずんだもんDiscord Bot.
 
@@ -106,12 +106,11 @@ shuttle project create --name <project-name>
 
 
 [ci]: https://github.com/novum-d/zunda-bot-rs/actions
-[ci-badge]: https://img.shields.io/github/actions/workflow/status/novum-d/zunda-bot-rs/ci.yml?branch=current&style=flat-square
+[ci-badge]: https://img.shields.io/github/actions/workflow/status/novum-d/zunda-bot-rs/discord-bot-deploy.yml?branch=current&style=flat-square
 
-[docs]: https://github.com/novum-d/zunda-bot-rs/docs
-[docs-badge]: https://img.shields.io/badge/docs-online-5023dd.svg?style=flat-square
+[docs]: https://github.com/novum-d/zunda-bot-rs/tree/main/docs
+[docs-badge]: https://img.shields.io/badge/docs-blue
+
 
 [rust-version-badge]: https://img.shields.io/badge/rust-1.87.0+-93450a.svg?style=flat-square
 [rust-version-link]: https://blog.rust-lang.org/2025/05/15/Rust-1.87.0
-
-[logo]: https://github.com/user-attachments/assets/47b6028f-fea4-4aae-b615-aff4f8e1c197
