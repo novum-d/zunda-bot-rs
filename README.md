@@ -46,7 +46,7 @@ Botをサーバーに追加する際に毎回認証を求められるので、`R
    
    すると、ボットを追加するサーバーを選択する画面が開くので、好きなサーバーを選び、ボットを追加
    
-### 2. Shuttle
+### 2. デプロイ先のShuttleの設定
 2.1. Rustのホスティングサービス[Shuttle](https://console.shuttle.dev/)にログイン
 ```shell
 shuttle login
@@ -106,7 +106,7 @@ shuttle project create --name <project-name>
 
 
 [ci]: https://github.com/novum-d/zunda-bot-rs/actions
-[ci-badge]: https://img.shields.io/github/actions/workflow/status/novum-d/zunda-bot-rs/discord-bot-deploy.yml?branch=current&style=flat-square
+[ci-badge]: https://img.shields.io/github/actions/workflow/status/novum-d/zunda-bot-rs/discord-bot-deploy.yml?branch=main&style=flat-square
 
 [docs]: https://github.com/novum-d/zunda-bot-rs/tree/main/docs
 [docs-badge]: https://img.shields.io/badge/docs-blue
