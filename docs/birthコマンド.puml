@@ -1,0 +1,160 @@
+@startuml
+
+
+' --- 前提となる仕様 ----------------------
+' - guild_member
+'     - Discord User ID(user_id, 文字列型)
+'     - ニックネーム(nickname, 文字列型)
+'     - 誕生日(birth, 日付型)
+'
+' - 日時がUNIXエポック(default)である場合は、誕生日を通知しない
+' - 基本的にサーバーに参加しているメンバーの誕生日通知を送信可能にできる
+' ---------------------------------------
+
+title birthコマンド処理フロー
+start
+
+:DB接続;
+:guild_memberテーブル作成を含むDBマイグレーション実行;
+
+' 初期更新処理
+:guild_memberテーブルの情報を取得;
+:現在のguild内メンバーのDiscord User IDのリストを取得;
+
+:「取得した現在のguild内メンバーのDiscord User ID」と
+「guild_memberテーブルのDiscord User ID」のリストを比較;
+
+
+if (「取得した現在のguild内メンバーのDiscord User ID」と「guild_memberテーブルのDiscord User ID」のリストが全一致 ) is (はい) then
+else (いいえ)
+    if (「guild_memberテーブル」に存在し、「現在のguild内」には存在しないDiscord User IDがある) is (はい) then
+      :「該当のDiscord User IDを含むメンバー情報」をguild_memberテーブルの行から削除;
+    else (いいえ)
+    endif
+
+    if (「現在のguild内」に存在し、「guild_memberテーブル」には存在しないDiscord User IDがある) is (はい) then
+      :「該当のDiscord User IDを含む取得した現在のguild内メンバー情報」をguild_memberテーブルの行に追加;
+    else (いいえ)
+    endif
+endif
+
+:birthコマンドを実行;
+
+:birthコマンドを受信;
+
+switch ( subcommands )
+
+' 誕生日通知設定リスト表示 -----------------------------------
+case ( list )
+    :guild_memberテーブルから日時がUNIXエポック以外のメンバーを取得;
+
+    :メンバーリストをモーダル表示;
+
+' 誕生日通知設定登録 -----------------------------------
+case ( register )
+  :guild_memberテーブルから日時がUNIXエポックのメンバー情報を取得;
+
+  :誕生日通知が未登録のメンバーリストをモーダル表示
+
+
+  * ニックネーム・誕生日入力フィールドのリスト
+  * 登録ボタン
+  * キャンセルボタン;
+  ' 以下のようなUI配置を想定
+  ' ☑ {ニックネーム} - {誕生日入力フィールド}
+  ' ☑ {ニックネーム} - {誕生日入力フィールド}
+  ' ☑ {ニックネーム} - {誕生日入力フィールド}
+  ' {登録ボタン} {キャンセルボタン}
+
+  :誕生日入力フィールドに日時を入力して編集;
+
+  switch()
+  case(登録)
+      :登録ボタンをタップ;
+
+      :guild_memberテーブルの各メンバーの誕生日を更新;
+  case(キャンセル)
+      :モーダルを閉じる;
+  endswitch
+
+' 誕生日通知設定編集 -----------------------------------
+case ( edit )
+    :guild_memberテーブルから日時がUNIXエポック以外のメンバーを取得;
+    :メンバーの誕生日通知の編集リストをモーダル表示
+
+    * ニックネーム・誕生日入力フィールドのリスト
+    * 編集ボタン
+    * キャンセルボタン;
+    ' 以下のようなUI配置を想定
+    ' ☑ {ニックネーム} - {誕生日入力フィールド}
+    ' ☑ {ニックネーム} - {誕生日入力フィールド}
+    ' ☑ {ニックネーム} - {誕生日入力フィールド}
+    ' {編集ボタン} {キャンセルボタン}
+
+    :誕生日入力フィールドに日時を入力して編集;
+
+    switch()
+    case(保存)
+        :保存ボタンをタップ;
+
+        :guild_memberテーブルの各メンバーの誕生日を更新;
+    case(キャンセル)
+        :モーダルを閉じる;
+    endswitch
+
+' 誕生日通知設定解除 -----------------------------------
+case ( reset )
+    :guild_memberテーブルから日時がUNIXエポック以外のメンバーを取得;
+    :メンバーの誕生日通知設定解除の
+    選択候補リストをモーダル表示
+
+    * ニックネーム・誕生日のリスト
+    * リセットボタン
+    * キャンセル;
+    ' 以下のようなUI配置を想定
+    ' ☑ {ニックネーム} - {誕生日}
+    ' ☑ {ニックネーム} - {誕生日}
+    ' ☑ {ニックネーム} - {誕生日}
+    ' {リセットボタン} {キャンセルボタン}
+
+    :通知を解除するメンバーをチェックボックスで選択;
+
+    switch()
+    case(リセット)
+        :リセットボタンをタップ;
+        if (メンバーリストでチェックがついているものがある) is (はい) then
+            :チェックのついているメンバーの誕生日を
+            UNIXエポックでguild_memberテーブルに保存;
+        else (いいえ)
+        endif
+    case(キャンセル)
+        :モーダルを閉じる;
+    endswitch
+
+    ' 誕生日通知設定更新 -----------------------------------
+    case ( update )
+        :guild_memberテーブルの情報を取得;
+        :現在のguild内メンバーのDiscord User IDのリストを取得;
+
+        :「取得した現在のguild内メンバーのDiscord User ID」と
+        「guild_memberテーブルのDiscord User ID」のリストを比較;
+
+
+        if (「取得した現在のguild内メンバーのDiscord User ID」と「guild_memberテーブルのDiscord User ID」のリストが全一致 ) is (はい) then
+        else (いいえ)
+            if (「guild_memberテーブル」に存在し、「現在のguild内」には存在しないDiscord User IDがある) is (はい) then
+              :「該当のDiscord User IDを含むメンバー情報」をguild_memberテーブルの行から削除;
+            else (いいえ)
+            endif
+
+            if (「現在のguild内」に存在し、「guild_memberテーブル」には存在しないDiscord User IDがある) is (はい) then
+              :「該当のDiscord User IDを含む取得した現在のguild内メンバー情報」をguild_memberテーブルの行に追加;
+            else (いいえ)
+            endif
+        endif
+
+endswitch
+
+stop
+
+@enduml
