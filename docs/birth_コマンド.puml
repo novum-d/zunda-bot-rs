@@ -9,29 +9,7 @@
 title birthコマンド処理フロー
 start
 
-:DB接続;
-:DBマイグレーション実行;
-
-' 初期更新処理
-:guild_memberテーブルの情報を取得;
-:現在のguild内メンバーのmember_idのリストを取得;
-
-:「取得した現在のguild内メンバーのmember_id」と
-「guild_memberテーブルのmember_id」のリストを比較;
-
-
-if (「取得した現在のguild内メンバーのmember_id」と「guild_memberテーブルのmember_id」のリストが全一致 ) is (はい) then
-else (いいえ)
-    if (「guild_memberテーブル」に存在し、「現在のguild内」には存在しないmember_idがある) is (はい) then
-      :「該当のmember_idを含むメンバー情報」をguild_memberテーブルの行から削除;
-    else (いいえ)
-    endif
-
-    if (「現在のguild内」に存在し、「guild_memberテーブル」には存在しないmember_idがある) is (はい) then
-      :「該当のmember_idを含む取得した現在のguild内メンバー情報」をguild_memberテーブルの行に追加;
-    else (いいえ)
-    endif
-endif
+:"birth_共通"の処理を実行;
 
 :birthコマンドを実行;
 
@@ -41,13 +19,17 @@ switch ( subcommands )
 
 ' 誕生日通知設定リスト表示 -----------------------------------
 case ( list )
-    :guild_memberテーブルから日時がUNIXエポック以外のメンバーを取得;
+    :guild_memberテーブルから
+    「コマンドが実行されたギルドのギルドIDに一致」し、
+    「日時がUNIXエポック以外」のメンバー情報を取得;
 
     :メンバーリストをモーダル表示;
 
 ' 誕生日通知設定登録 -----------------------------------
 case ( register )
-  :guild_memberテーブルから日時がUNIXエポックのメンバー情報を取得;
+  :guild_memberテーブルから
+  「コマンドが実行されたギルドのギルドIDに一致」し、
+  「日時がUNIXエポック」であるメンバー情報を取得;
 
   :誕生日通知が未登録のメンバーリストをモーダル表示
 
@@ -74,7 +56,9 @@ case ( register )
 
 ' 誕生日通知設定編集 -----------------------------------
 case ( edit )
-    :guild_memberテーブルから日時がUNIXエポック以外のメンバーを取得;
+    :guild_memberテーブルから
+    「コマンドが実行されたギルドのギルドIDに一致」し、
+    「日時がUNIXエポック以外」のメンバー情報を取得;
     :メンバーの誕生日通知の編集リストをモーダル表示
 
     * ニックネーム・誕生日入力フィールドのリスト
@@ -98,8 +82,10 @@ case ( edit )
     endswitch
 
 ' 誕生日通知設定解除 -----------------------------------
-case ( reset )
-    :guild_memberテーブルから日時がUNIXエポック以外のメンバーを取得;
+case ( delete )
+    :guild_memberテーブルから
+    「コマンドが実行されたギルドのギルドIDに一致」し、
+    「日時がUNIXエポック以外」のメンバー情報を取得;
     :メンバーの誕生日通知設定解除の
     選択候補リストをモーダル表示
 
@@ -128,25 +114,8 @@ case ( reset )
 
     ' 誕生日通知設定更新 -----------------------------------
     case ( update )
-        :guild_memberテーブルの情報を取得;
-        :現在のguild内メンバーのmember_idのリストを取得;
 
-        :「取得した現在のguild内メンバーのmember_id」と
-        「guild_memberテーブルのmember_id」のリストを比較;
-
-
-        if (「取得した現在のguild内メンバーのmember_id」と「guild_memberテーブルのmember_id」のリストが全一致 ) is (はい) then
-        else (いいえ)
-            if (「guild_memberテーブル」に存在し、「現在のguild内」には存在しないmember_idがある) is (はい) then
-              :「該当のmember_idを含むメンバー情報」をguild_memberテーブルの行から削除;
-            else (いいえ)
-            endif
-
-            if (「現在のguild内」に存在し、「guild_memberテーブル」には存在しないmember_idがある) is (はい) then
-              :「該当のmember_idを含む取得した現在のguild内メンバー情報」をguild_memberテーブルの行に追加;
-            else (いいえ)
-            endif
-        endif
+        :"birth_共通"の処理を実行;
 
 endswitch
 
