@@ -6,6 +6,8 @@ use serenity::prelude::*;
 use shuttle_runtime::SecretStore;
 use poise::serenity_prelude as serenity;
 use serenity::model::gateway::GatewayIntents;
+use sqlx::{query, PgPool};
+use crate::commands::birth::birth;
 
 /// `Data`構造体は、Botコマンド実行時に毎回アクセスできる「ユーザーデータ」を格納するための型
 /// この型にフィールドを追加することで、コマンド間で共有したい情報（設定値や状態など）を保持できる
@@ -16,9 +18,16 @@ type Context<'a> = poise::Context<'a, Data, Error>;
 
 
 #[shuttle_runtime::main]
-async fn serenity(
+async fn main(
     #[shuttle_runtime::Secrets] secrets: SecretStore,
+    #[shuttle_shared_db::Postgres()] pool: PgPool, // local_uriを指定するとエラーになるので記述しない
 ) -> shuttle_serenity::ShuttleSerenity {
+    // マイグレーション実行
+    sqlx::migrate!("db/migrations")
+        .run(&pool)
+        .await
+        .expect("Failed to run migrations");
+
     // `Secrets.toml`からトークンを取得
     let token = secrets
         .get("DISCORD_TOKEN")
@@ -35,6 +44,7 @@ async fn serenity(
             commands: vec![
                 // コマンドはここに追加
                 hello(),
+                birth(),
             ],
             ..Default::default()
         })
