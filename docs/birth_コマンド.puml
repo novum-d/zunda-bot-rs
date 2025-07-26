@@ -2,11 +2,6 @@
 
 
 ' --- 前提となる仕様 ----------------------
-' - guild_member
-'     - Discord User ID(user_id, 文字列型)
-'     - ニックネーム(nickname, 文字列型)
-'     - 誕生日(birth, 日付型)
-'
 ' - 日時がUNIXエポック(default)である場合は、誕生日を通知しない
 ' - 基本的にサーバーに参加しているメンバーの誕生日通知を送信可能にできる
 ' ---------------------------------------
@@ -15,25 +10,25 @@ title birthコマンド処理フロー
 start
 
 :DB接続;
-:guild_memberテーブル作成を含むDBマイグレーション実行;
+:DBマイグレーション実行;
 
 ' 初期更新処理
 :guild_memberテーブルの情報を取得;
-:現在のguild内メンバーのDiscord User IDのリストを取得;
+:現在のguild内メンバーのmember_idのリストを取得;
 
-:「取得した現在のguild内メンバーのDiscord User ID」と
-「guild_memberテーブルのDiscord User ID」のリストを比較;
+:「取得した現在のguild内メンバーのmember_id」と
+「guild_memberテーブルのmember_id」のリストを比較;
 
 
-if (「取得した現在のguild内メンバーのDiscord User ID」と「guild_memberテーブルのDiscord User ID」のリストが全一致 ) is (はい) then
+if (「取得した現在のguild内メンバーのmember_id」と「guild_memberテーブルのmember_id」のリストが全一致 ) is (はい) then
 else (いいえ)
-    if (「guild_memberテーブル」に存在し、「現在のguild内」には存在しないDiscord User IDがある) is (はい) then
-      :「該当のDiscord User IDを含むメンバー情報」をguild_memberテーブルの行から削除;
+    if (「guild_memberテーブル」に存在し、「現在のguild内」には存在しないmember_idがある) is (はい) then
+      :「該当のmember_idを含むメンバー情報」をguild_memberテーブルの行から削除;
     else (いいえ)
     endif
 
-    if (「現在のguild内」に存在し、「guild_memberテーブル」には存在しないDiscord User IDがある) is (はい) then
-      :「該当のDiscord User IDを含む取得した現在のguild内メンバー情報」をguild_memberテーブルの行に追加;
+    if (「現在のguild内」に存在し、「guild_memberテーブル」には存在しないmember_idがある) is (はい) then
+      :「該当のmember_idを含む取得した現在のguild内メンバー情報」をguild_memberテーブルの行に追加;
     else (いいえ)
     endif
 endif
@@ -134,21 +129,21 @@ case ( reset )
     ' 誕生日通知設定更新 -----------------------------------
     case ( update )
         :guild_memberテーブルの情報を取得;
-        :現在のguild内メンバーのDiscord User IDのリストを取得;
+        :現在のguild内メンバーのmember_idのリストを取得;
 
-        :「取得した現在のguild内メンバーのDiscord User ID」と
-        「guild_memberテーブルのDiscord User ID」のリストを比較;
+        :「取得した現在のguild内メンバーのmember_id」と
+        「guild_memberテーブルのmember_id」のリストを比較;
 
 
-        if (「取得した現在のguild内メンバーのDiscord User ID」と「guild_memberテーブルのDiscord User ID」のリストが全一致 ) is (はい) then
+        if (「取得した現在のguild内メンバーのmember_id」と「guild_memberテーブルのmember_id」のリストが全一致 ) is (はい) then
         else (いいえ)
-            if (「guild_memberテーブル」に存在し、「現在のguild内」には存在しないDiscord User IDがある) is (はい) then
-              :「該当のDiscord User IDを含むメンバー情報」をguild_memberテーブルの行から削除;
+            if (「guild_memberテーブル」に存在し、「現在のguild内」には存在しないmember_idがある) is (はい) then
+              :「該当のmember_idを含むメンバー情報」をguild_memberテーブルの行から削除;
             else (いいえ)
             endif
 
-            if (「現在のguild内」に存在し、「guild_memberテーブル」には存在しないDiscord User IDがある) is (はい) then
-              :「該当のDiscord User IDを含む取得した現在のguild内メンバー情報」をguild_memberテーブルの行に追加;
+            if (「現在のguild内」に存在し、「guild_memberテーブル」には存在しないmember_idがある) is (はい) then
+              :「該当のmember_idを含む取得した現在のguild内メンバー情報」をguild_memberテーブルの行に追加;
             else (いいえ)
             endif
         endif
