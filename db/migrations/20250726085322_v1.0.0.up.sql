@@ -2,14 +2,14 @@
 
 CREATE TABLE guild
 (
-    guild_id VARCHAR(255) PRIMARY KEY,
+    guild_id BIGINT PRIMARY KEY,
     name     VARCHAR(255) NOT NULL
 );
 
 CREATE TABLE guild_member
 (
-    member_id VARCHAR(255),
-    guild_id  VARCHAR(255),
+    member_id BIGINT,
+    guild_id  BIGINT,
     nickname  VARCHAR(255),
     birth     TIMESTAMP NOT NULL,
     PRIMARY KEY (member_id, guild_id),
