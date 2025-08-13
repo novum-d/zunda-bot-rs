@@ -7,39 +7,65 @@ start
 
 ' 初期更新処理
 
-:guildテーブルからギルドIDのリストを取得
+' ギルド情報取得
+partition "ギルド情報取得" {
+:guildテーブルから「ギルドID」のリストを取得;
 
-（以下、ギルドIDごとに処理を実行する）;
-
-:ギルドIDのリストから次のギルドIDを取得;
-
-while (ギルドIDがある) is (はい)
-
-:ギルドIDごとのguild_memberテーブルの情報を取得;
-
-:ギルドIDに一致するメンバーのDiscord User IDのリストを取得;
-
-:「取得したギルドIDに一致するメンバーのDiscord User ID」と
-「guild_memberテーブルのDiscord User ID」のリストを比較;
+:APIから「ギルドIDとギルド名、 メンバー情報リスト」の一覧を取得;
+}
 
 
-if (「取得したギルドIDに一致するメンバーのDiscord User ID」と「guild_memberテーブルのDiscord User ID」のリストが全一致 ) is (はい) then
-else (いいえ)
-    if (「guild_memberテーブル」に存在し、「ギルドIDに一致する」には存在しないDiscord User IDがある) is (はい) then
-      :「該当のDiscord User IDを含むメンバー情報」をguild_memberテーブルの行から削除;
-    else (いいえ)
-    endif
+' --- ギルド情報更新
+partition "ギルド情報更新" {
 
-    if (「ギルドIDに一致する」に存在し、「guild_memberテーブル」には存在しないDiscord User IDがある) is (はい) then
-      :「該当のDiscord User IDを含む取得したギルドIDに一致するメンバー情報」を取得;
-      :メンバーguild_memberテーブルの行に追加;
-    else (いいえ)
-    endif
-endif
+:guildテーブルから取得したギルドIDのリストに
+「APIで取得したギルドIDが存在するか」一つずつ検索;
 
-:ギルドIDのリストから次のギルドIDを取得;
 
-endwhile (いいえ)
+while (検索対象のギルドIDが存在)
+    switch()
+
+    case(  APIとテーブルのギルドIDが一致)
+        :該当するギルドIDを持つAPIのギルド情報をguildテーブルの行へ更新;
+
+    case(  guildテーブルに存在し、APIにないギルドIDが存在)
+        :該当するギルドIDをguild_memberテーブルから削除;
+        :該当するギルドIDをguildテーブルから削除;
+
+    case(  APIに存在し、guildテーブルにないギルドIDが存在)
+        :該当するギルドIDを持つAPIをguildテーブルの行に追加;
+    endswitch
+
+endwhile
+
+}
+
+
+' --- ギルドメンバー情報更新
+partition "ギルドメンバー情報更新" {
+
+:更新したguildテーブルから「ギルドID」のリストを再取得;
+:guild_memberテーブルからギルドIDごとの「ギルドID, メンバーIDのリスト」のマップを取得;
+
+:guild_memberテーブルから取得したギルドIDごとのメンバーIDのリストに
+「APIで取得したメンバーIDが存在するか」一つずつ検索;
+
+while (検索対象のメンバーIDが存在)
+    switch()
+
+    case(  APIとテーブルのメンバーIDが一致)
+        :該当するメンバーIDを持つAPIのメンバー情報をguild_memberテーブルの行へ更新;
+
+    case(  guild_memberテーブルに存在し、APIにないメンバーIDが存在)
+        :該当するメンバーIDをguild_memberテーブルから削除;
+
+    case(  APIに存在し、guild_memberテーブルにないメンバーIDが存在)
+        :該当するメンバーIDを持つAPIをguild_memberテーブルの行に追加;
+    endswitch
+
+endwhile
+
+}
 
 stop
 
