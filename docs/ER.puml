@@ -1,6 +1,6 @@
 @startuml
 entity "guild" as guild {
-  +guild_id : VARCHAR(255) <<PK>>
+  +guild_id : BIGINT <<PK>>
   --
   *name      : VARCHAR(255)
 }
@@ -13,8 +13,8 @@ note right of guild::name
 end note
 
 entity "guild_member" as member {
-  +member_id : VARCHAR(255) <<PK>>
-  +guild_id  : VARCHAR(255) <<PK,FK>>
+  +member_id : BIGINT <<PK>>
+  +guild_id  : BIGINT <<PK,FK>>
   --
   *birth      : TIMESTAMP
   nickname   : VARCHAR(255)
