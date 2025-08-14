@@ -16,7 +16,7 @@ entity "guild_member" as member {
   +member_id : BIGINT <<PK>>
   +guild_id  : BIGINT <<PK,FK>>
   --
-  *birth      : TIMESTAMP
+  birth      : TIMESTAMP
   nickname   : VARCHAR(255)
 }
 note right of member::member_id
