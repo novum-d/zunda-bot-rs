@@ -17,7 +17,6 @@ entity "guild_member" as member {
   +guild_id  : BIGINT <<PK,FK>>
   --
   birth      : TIMESTAMP
-  nickname   : VARCHAR(255)
 }
 note right of member::member_id
 Discordユーザーを識別するID
@@ -25,10 +24,6 @@ end note
 
 note right of member::guild_id
 ギルドを識別するID
-end note
-
-note right of member::nickname
-自由に変更可能なニックネーム
 end note
 
 note right of member::birth

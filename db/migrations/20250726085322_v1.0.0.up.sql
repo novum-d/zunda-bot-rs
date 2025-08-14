@@ -10,8 +10,7 @@ CREATE TABLE guild_member
 (
     member_id BIGINT,
     guild_id  BIGINT,
-    nickname  VARCHAR(255),
-    birth     TIMESTAMP,
+    birth     DATE,
     PRIMARY KEY (member_id, guild_id),
     FOREIGN KEY (guild_id) REFERENCES guild (guild_id)
 );
