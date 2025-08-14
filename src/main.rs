@@ -192,7 +192,7 @@ async fn main(
 
 
                     // APIに存在し、guild_memberテーブルにないメンバーIDが存在
-                    for &id in latest_member_id_set.intersection(&local_member_id_set) {
+                    for &id in latest_member_id_set.difference(&local_member_id_set) {
                         // 該当するメンバーIDを持つAPIをguild_memberテーブルの行に追加
                         let member = latest_guild_members_set_by_guild
                             .iter()
