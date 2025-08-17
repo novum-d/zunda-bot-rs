@@ -1,6 +1,8 @@
 mod commands;
 mod constants;
 
+use crate::commands::birth::birth;
+use crate::commands::test::test;
 use anyhow::Context as _;
 use chrono::{Datelike, Timelike};
 use commands::hello::hello;
@@ -55,8 +57,8 @@ async fn main(
             commands: vec![
                 // コマンドはここに追加
                 hello(),
-                // birth(),
-                // test(), // デバッグ用
+                test(), // デバッグ用
+                birth(),
             ],
             ..Default::default()
         })
