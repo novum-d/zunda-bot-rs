@@ -1,8 +1,6 @@
 mod commands;
 mod constants;
 
-use crate::commands::birth::birth;
-use crate::commands::test::test;
 use anyhow::Context as _;
 use chrono::{Datelike, Timelike};
 use commands::hello::hello;
@@ -17,6 +15,7 @@ use sqlx::types::chrono::{Local, NaiveDate, NaiveTime, TimeZone};
 use sqlx::{FromRow, PgPool};
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -56,23 +55,24 @@ async fn main(
             commands: vec![
                 // コマンドはここに追加
                 hello(),
-                birth(),
-                test(), // デバッグ用
+                // birth(),
+                // test(), // デバッグ用
             ],
             ..Default::default()
         })
         .setup(|ctx, _ready, framework| {
             Box::pin(async move {
+                let http = ctx.http();
                 // --- ギルド情報取得  ------------------------------------------------------------------------
                 // guildテーブルから「ギルドID」のリストを取得
                 let local_guild_ids = select_guild_ids(&pool).await?;
 
                 // APIから「ギルドIDとギルド名、メンバー情報リスト」の一覧を取得
-                let latest_guild_ids = fetch_my_guild_ids(&ctx).await?;
+                let latest_guild_ids = fetch_my_guild_ids(http).await?;
                 let latest_guild_futures =
                     latest_guild_ids
                         .iter()
-                        .map(|guild_id| fetch_my_guild(ctx.http(), guild_id));
+                        .map(|guild_id| fetch_my_guild(http, guild_id));
                 let latest_my_guilds: Vec<MyGuild> =
                     join_all(latest_guild_futures)
                         .await
@@ -217,23 +217,7 @@ async fn main(
                 }
                 // -----------------------------------------------------------------------------------------------------
 
-
-                // guild_memberテーブルからギルドIDごとの「ギルドID, メンバーIDのリスト」のマップを取得
-                let member_ids_map_by_guild = select_members(&pool).await?;
-                for GuildMember {
-                    guild_id,
-                    member_id,
-                    birth,
-                } in member_ids_map_by_guild {
-                    if let Some(birth) = birth {
-                        run_every_year_at(
-                            ctx.http(),
-                            guild_id,
-                            member_id,
-                            &birth,
-                        ).await?;
-                    }
-                }
+                tokio::spawn(birthday_cron_worker(pool.clone(), Arc::clone(&ctx.http)));
 
                 poise::builtins::register_globally(ctx, &framework.options().commands).await?;
 
@@ -263,77 +247,6 @@ struct MyGuildMember {
     guild_id: i64,
     member_id: i64,
     birth: Option<NaiveDate>,
-}
-
-async fn run_every_year_at(
-    http: &Http,
-    guild_id: i64,
-    member_id: i64,
-    date: &NaiveDate,
-) -> Result<(), Error> {
-    let noon = NaiveTime::from_hms_opt(12, 0, 0).expect("Invalid time.");
-    loop {
-        let now = Local::now().naive_local();
-        let mut target =
-            NaiveDate::from_ymd_opt(
-                now.year(),
-                date.month(),
-                date.day(),
-            )
-                .expect("Invalid date.")
-                .and_time(noon);
-
-        // 今年の指定日時を過ぎていれば
-        if target <= now {
-            target = NaiveDate::from_ymd_opt(
-                now.year() + 1, // 翌年
-                date.month(),
-                date.day(),
-            )
-                .expect("Invalid date.")
-                .and_time(noon);
-        }
-
-        let wait_secs = (target - now).num_seconds();
-        let wait_secs = if wait_secs > 0 {
-            wait_secs
-        } else {
-            0
-        };
-        sleep(Duration::from_secs(u64::try_from(wait_secs)?)).await;
-
-        let guild_id = GuildId::new(u64::try_from(guild_id)?);
-        let channels = guild_id.channels(http).await?;
-        if let Some((_, channel)) = channels.iter()
-            .find(|(_, ch)| {
-                ch.kind == ChannelType::Text &&
-                    (ch.name == "一般" || ch.name == "general")
-            })
-        {
-            let mention = format!("<@{}>", member_id);
-            let main_content = format!("(テスト(実際は誕生日じゃないよ🙃) )\n@here\n今日は「🎂 {} さんのお誕生日 🎂」！\n\n今年も自分らしい１年を過ごせるとよきなのだ！！！", mention);
-            let member = guild_id.member(http, u64::try_from(member_id)?).await?;
-            let msg = channel.id.send_message(http, CreateMessage::new()
-                .content(main_content)
-                .embed(
-                    CreateEmbed::new()
-                        .title(member.display_name())
-                        .thumbnail(member.user.avatar_url().unwrap_or_default())
-                        .description(date.format("%m/%d").to_string())
-                ),
-            ).await?;
-            msg.react(http, ReactionType::Unicode("🎉".to_string())).await?;
-
-            let mention = format!("<@{}>", member_id);
-            let sub_content = format!("{} さん\nお誕生日おめでとうなのだ🎉\nいつもありがとなのだ！", mention);
-            channel.id
-                .send_message(http, CreateMessage::new()
-                    .content(sub_content)
-                    .reference_message(&msg),
-                )
-                .await?;
-        }
-    }
 }
 
 /// ギルドの情報を取得する関数
@@ -366,8 +279,8 @@ async fn fetch_my_guild(
 
 
 /// ボットが所属するギルドIDのリストを取得する関数
-async fn fetch_my_guild_ids(ctx: &serenity::Context) -> anyhow::Result<Vec<GuildId>> {
-    let guilds = ctx.http.get_guilds(None, None).await?;
+async fn fetch_my_guild_ids(http: &Http) -> anyhow::Result<Vec<GuildId>> {
+    let guilds = http.get_guilds(None, None).await?;
     Ok(guilds.into_iter().map(|g| g.id).collect())
 }
 
@@ -549,5 +462,75 @@ async fn insert_guild_member(
     )
         .execute(pool)
         .await?;
+    Ok(())
+}
+
+async fn birthday_cron_worker(
+    pool: PgPool,
+    http: Arc<Http>,
+) -> anyhow::Result<()> {
+    loop {
+        // 現在時刻
+        let now = Local::now();
+        // 今日の12:00
+        let today_noon = now.date_naive().and_time(NaiveTime::from_hms_opt(12, 0, 0).unwrap());
+        // 次の実行時刻
+        let next_noon = if now.naive_local() < today_noon {
+            today_noon
+        } else {
+            (now.date_naive() + chrono::Duration::days(1)).and_time(NaiveTime::from_hms_opt(12, 0, 0).unwrap())
+        };
+        let wait = (next_noon - now.naive_local()).num_seconds().max(0) as u64;
+        sleep(Duration::from_secs(wait)).await;
+
+        // ここで誕生日チェック処理
+        check(&pool, &http).await?;
+
+        // 以降は24時間ごとに実行
+        loop {
+            sleep(Duration::from_secs(60 * 60 * 24)).await;
+            // ここで誕生日チェック処理
+            check(&pool, &http).await?;
+        }
+    }
+}
+
+
+async fn check(pool: &PgPool, http: &Http) -> anyhow::Result<()> {
+    let member_ids_map_by_guild = select_members(pool).await?;
+    for GuildMember { guild_id, member_id, birth } in member_ids_map_by_guild {
+        if let Some(birth) = birth {
+            let guild_id = GuildId::new(u64::try_from(guild_id)?);
+            let channels = guild_id.channels(http).await?;
+            if let Some((_, channel)) = channels.iter()
+                .find(|(_, ch)| {
+                    ch.kind == ChannelType::Text &&
+                        (ch.name == "一般" || ch.name == "general")
+                })
+            {
+                let mention = format!("<@{}>", member_id);
+                let main_content = format!("(テスト(実際は誕生日じゃないよ🙃) )\n@here\n今日は「🎂 {} さんのお誕生日 🎂」！\n\n今年も自分らしい１年を過ごせるとよきなのだ！！！", mention);
+                let member = guild_id.member(http, u64::try_from(member_id)?).await?;
+                let msg = channel.id.send_message(http, CreateMessage::new()
+                    .content(main_content)
+                    .embed(
+                        CreateEmbed::new()
+                            .title(member.display_name())
+                            .thumbnail(member.user.avatar_url().unwrap_or_default())
+                            .description(birth.format("%m/%d").to_string())
+                    ),
+                ).await?;
+                msg.react(http, ReactionType::Unicode("🎉".to_string())).await?;
+
+                let sub_content = format!("{} さん\nお誕生日おめでとうなのだ🎉\nいつもありがとなのだ！", mention);
+                channel.id
+                    .send_message(http, CreateMessage::new()
+                        .content(sub_content)
+                        .reference_message(&msg),
+                    )
+                    .await?;
+            }
+        }
+    }
     Ok(())
 }
