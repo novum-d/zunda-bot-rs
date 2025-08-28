@@ -1,5 +1,6 @@
-use crate::{select_member_by_id, update_guild_member_birth, Context, Error};
+use crate::{select_member_by_id, select_members_by_guild_id, update_guild_member_birth, update_guilds, Context, Error};
 use chrono::NaiveDate;
+use poise::futures_util::future::join_all;
 use poise::{ChoiceParameter, CreateReply, Modal};
 use serenity::all::CreateEmbed;
 
@@ -9,7 +10,6 @@ pub enum BirthAction {
     Signup,
     Edit,
     Reset,
-    Update,
 }
 
 /// 誕生日コマンド
@@ -18,12 +18,42 @@ pub async fn birth(
     ctx: Context<'_>,
     #[description = "操作"] action: BirthAction,
 ) -> Result<(), Error> {
+    let http = ctx.http();
+    let pool = &ctx.data().pool;
+    update_guilds(pool, http).await?;
+
     match action {
         BirthAction::List => {
-            ctx.say("List").await?;
+            let guild_id = ctx.guild_id().expect("Could not retrieve the Guild ID.");
+            let members = select_members_by_guild_id(pool, i64::from(guild_id)).await?;
+            let birth_list = join_all(members.into_iter().map(|member| async move {
+                let latest_member_id = u64::try_from(member.member_id).ok()?;
+                let latest_member = guild_id.member(http, latest_member_id).await.ok()?;
+                member.birth.map(|birth| {
+                    format!(
+                        "・{}: {}\n",
+                        latest_member.display_name(),
+                        birth.format("%m/%d"),
+                    )
+                })
+            })).await
+                .into_iter()
+                .filter_map(|x| x)
+                .collect::<Vec<_>>();
+
+            if birth_list.is_empty() {
+                ctx.send(CreateReply::default()
+                    .embed(CreateEmbed::new()
+                        .title("⚠️ 誕生日が登録されていないのだ")
+                        .color(0xff9900)) // オレンジ色
+                    .ephemeral(true))
+                    .await?;
+            } else {
+                let content = format!("# 誕生日リスト\n{}", birth_list.join(""));
+                ctx.send(CreateReply::default().content(content)).await?;
+            }
         }
         BirthAction::Signup => {
-            let pool = &ctx.data().pool;
             let guild_id = i64::from(ctx.guild_id().expect("Could not retrieve the Guild ID."));
             let member_id = i64::from(ctx.author().id);
 
@@ -48,9 +78,9 @@ pub async fn birth(
 
                             ctx.send(CreateReply::default()
                                 .embed(CreateEmbed::new()
-                                    .title("✅  誕生日の登録が完了いたしました。")
+                                    .title("✅  誕生日の登録が完了したのだ。")
                                     .color(0x00ff00)) // オレンジ色
-                                .content("登録された日付の12時に誕生日が通知されます。")
+                                .content("登録したた日付の12時に誕生日が通知されるのだ。")
                                 .ephemeral(true))
                                 .await?;
                         }
@@ -58,7 +88,7 @@ pub async fn birth(
                 } else {
                     ctx.send(CreateReply::default()
                         .embed(CreateEmbed::new()
-                            .title("⚠️ 誕生日はすでに登録済みです。")
+                            .title("⚠️ 誕生日はすでに登録済みなのだ")
                             .color(0xff9900)) // オレンジ色
                         .ephemeral(true))
                         .await?;
@@ -66,12 +96,7 @@ pub async fn birth(
             }
         }
         BirthAction::Edit => {}
-        BirthAction::Reset => {
-            ctx.say("Reset").await?;
-        }
-        BirthAction::Update => {
-            ctx.say("Update").await?;
-        }
+        BirthAction::Reset => {}
     }
     Ok(())
 }
@@ -80,7 +105,7 @@ pub async fn birth(
 #[derive(Debug, Modal)]
 #[name = "誕生日の通知登録"] // 最初のタイトル
 struct BirthSignupModal {
-    #[name = "自身の誕生日を入力してください"] // フィールドのタイトル
+    #[name = "自身の誕生日を入力するのだ"] // フィールドのタイトル
     #[placeholder = "1999-12-10"]
     #[min_length = 10]
     #[max_length = 10]

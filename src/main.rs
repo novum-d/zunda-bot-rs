@@ -4,7 +4,8 @@ mod constants;
 use crate::commands::birth::birth;
 use crate::commands::test::test;
 use anyhow::Context as _;
-use chrono::{Datelike, Timelike};
+use chrono::Datelike;
+use chrono_tz::Asia::Tokyo;
 use commands::hello::hello;
 use poise::futures_util::future::join_all;
 use poise::serenity_prelude as serenity;
@@ -16,7 +17,6 @@ use shuttle_runtime::SecretStore;
 use sqlx::types::chrono::{Local, NaiveDate, NaiveTime, TimeZone};
 use sqlx::{FromRow, PgPool};
 use std::collections::{HashMap, HashSet};
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -57,166 +57,17 @@ async fn main(
             commands: vec![
                 // コマンドはここに追加
                 hello(),
-                test(), // デバッグ用
                 birth(),
+                test(), // デバッグ用
             ],
             ..Default::default()
         })
         .setup(|ctx, _ready, framework| {
             Box::pin(async move {
                 let http = ctx.http();
-                // --- ギルド情報取得  ------------------------------------------------------------------------
-                // guildテーブルから「ギルドID」のリストを取得
-                let local_guild_ids = select_guild_ids(&pool).await?;
 
-                // APIから「ギルドIDとギルド名、メンバー情報リスト」の一覧を取得
-                let latest_guild_ids = fetch_my_guild_ids(http).await?;
-                let latest_guild_futures =
-                    latest_guild_ids
-                        .iter()
-                        .map(|guild_id| fetch_my_guild(http, guild_id));
-                let latest_my_guilds: Vec<MyGuild> =
-                    join_all(latest_guild_futures)
-                        .await
-                        .into_iter()
-                        .filter_map(Result::ok)
-                        .collect();
-                // -----------------------------------------------------------------------------------------------------
+                update_guilds(&pool, http).await?;
 
-
-                // --- ギルド情報更新  ------------------------------------------------------------------------
-                // guildテーブルから取得したギルドIDのリストに
-                // 「APIで取得したギルドIDが存在するか」一つずつ検索
-                let local_guild_id_set: HashSet<i64> = local_guild_ids
-                    .iter()
-                    .cloned()
-                    .collect();
-                let latest_guild_id_set: HashSet<i64> = latest_my_guilds
-                    .iter()
-                    .map(|my_guild| &my_guild.id)
-                    .cloned()
-                    .collect();
-
-                // APIとテーブルのギルドIDが一致
-                for &id in local_guild_id_set.intersection(&latest_guild_id_set) {
-                    // 該当するギルドIDを持つAPIのギルド情報をguildテーブルの行へ更新
-                    let my_guild =
-                        latest_my_guilds
-                            .iter()
-                            .find(|my_guild| my_guild.id == id);
-                    if let Some(my_guild) = my_guild {
-                        update_guild_by_id(
-                            &pool,
-                            my_guild.id,
-                            &my_guild.name,
-                        ).await?;
-                    }
-                }
-
-                // guildテーブルに存在し、APIにないギルドIDが存在
-                for &id in local_guild_id_set.difference(&latest_guild_id_set) {
-                    // 該当するギルドIDをguildテーブルから削除
-                    delete_guild_by_id(
-                        &pool,
-                        id,
-                    ).await?;
-                }
-
-                // APIに存在し、guildテーブルにないギルドIDが存在
-                for &id in latest_guild_id_set.difference(&local_guild_id_set) {
-                    // 該当するギルドIDを持つAPIをguildテーブルの行に追加
-                    let my_guild = latest_my_guilds
-                        .iter()
-                        .find(|my_guild| my_guild.id == id);
-                    insert_guild_by_id(
-                        &pool,
-                        id,
-                        my_guild.map(|g| g.name.as_str()),
-                    ).await?;
-                }
-                // -----------------------------------------------------------------------------------------------------
-
-
-                // --- ギルドメンバー情報更新  ------------------------------------------------------------------------
-                // 更新したguildテーブルから「ギルドID」のリストを再取得
-                let guild_ids = select_guild_ids(&pool).await?;
-
-                // guild_memberテーブルからギルドIDごとの「ギルドID, メンバーIDのリスト」のマップを取得
-                let rows = select_members(&pool).await?;
-                let mut member_ids_map_by_guild: HashMap<i64, Vec<i64>> = HashMap::new();
-                for GuildMember { guild_id, member_id, birth } in rows {
-                    member_ids_map_by_guild.entry(guild_id).or_default().push(member_id);
-                }
-
-                // guild_memberテーブルから取得したギルドIDごとのメンバーIDのリストに
-                // 「APIで取得したメンバーIDが存在するか」一つずつ検索
-                for MyGuild { id, name: _, members } in &latest_my_guilds {
-                    let latest_guild_id = id.clone();
-                    let latest_member_ids: Vec<i64> =
-                        members
-                            .iter()
-                            .map(|member| member.member_id)
-                            .collect();
-                    let latest_guild_members_set_by_guild: HashSet<&MyGuildMember> =
-                        latest_my_guilds
-                            .iter()
-                            .filter(|my_guild| my_guild.id == latest_guild_id)
-                            .flat_map(|my_guild| my_guild.members.iter())
-                            .collect();
-
-                    let local_member_id_set: HashSet<i64> =
-                        member_ids_map_by_guild
-                            .get(&latest_guild_id)
-                            .cloned()
-                            .unwrap_or_default()
-                            .into_iter()
-                            .collect();
-
-                    let latest_member_id_set: HashSet<i64> =
-                        latest_guild_members_set_by_guild
-                            .iter()
-                            .map(|member| member.member_id)
-                            .collect();
-
-                    // APIとテーブルのメンバーIDが一致
-                    for &id in local_member_id_set.intersection(&latest_member_id_set) {
-                        // 該当するメンバーIDを持つAPIのメンバー情報をguild_memberテーブルの行へ更新
-                        let member =
-                            latest_guild_members_set_by_guild
-                                .iter()
-                                .find(|member| member.member_id == id);
-                        if let Some(member) = member {
-                            // メンバー情報を更新する内容があれば、ここに処理を置く
-                        }
-                    }
-
-                    // guild_memberテーブルに存在し、APIにないメンバーIDが存在
-                    for &id in local_member_id_set.difference(&latest_member_id_set) {
-                        // 該当するメンバーIDをguild_memberテーブルから削除
-                        delete_guild_member(
-                            &pool,
-                            latest_guild_id,
-                            id,
-                        ).await?;
-                    }
-
-
-                    // APIに存在し、guild_memberテーブルにないメンバーIDが存在
-                    for &id in latest_member_id_set.difference(&local_member_id_set) {
-                        // 該当するメンバーIDを持つAPIをguild_memberテーブルの行に追加
-                        let member = latest_guild_members_set_by_guild
-                            .iter()
-                            .find(|member| member.member_id == id);
-                        if let Some(member) = member {
-                            insert_guild_member(
-                                &pool,
-                                latest_guild_id,
-                                member.member_id,
-                                member.birth,
-                            ).await?;
-                        }
-                    }
-                }
                 // -----------------------------------------------------------------------------------------------------
 
                 tokio::spawn(birthday_cron_worker(pool.clone(), Arc::clone(&ctx.http)));
@@ -235,6 +86,159 @@ async fn main(
         .map_err(shuttle_runtime::CustomError::new)?;
 
     Ok(client.into())
+}
+
+pub async fn update_guilds(
+    pool: &PgPool,
+    http: &Http,
+) -> anyhow::Result<()> {
+    // --- ギルド情報取得  ------------------------------------------------------------------------
+    // guildテーブルから「ギルドID」のリストを取得
+    let local_guild_ids = select_guild_ids(&pool).await?;
+
+    // APIから「ギルドIDとギルド名、メンバー情報リスト」の一覧を取得
+    let latest_guild_ids = fetch_my_guild_ids(http).await?;
+    let latest_guild_futures =
+        latest_guild_ids
+            .iter()
+            .map(|guild_id| fetch_my_guild(http, guild_id));
+    let latest_my_guilds: Vec<MyGuild> =
+        join_all(latest_guild_futures)
+            .await
+            .into_iter()
+            .filter_map(Result::ok)
+            .collect();
+    // -----------------------------------------------------------------------------------------------------
+
+
+    // --- ギルド情報更新  ------------------------------------------------------------------------
+    // guildテーブルから取得したギルドIDのリストに
+    // 「APIで取得したギルドIDが存在するか」一つずつ検索
+    let local_guild_id_set: HashSet<i64> = local_guild_ids
+        .iter()
+        .cloned()
+        .collect();
+    let latest_guild_id_set: HashSet<i64> = latest_my_guilds
+        .iter()
+        .map(|my_guild| &my_guild.id)
+        .cloned()
+        .collect();
+
+    // APIとテーブルのギルドIDが一致
+    for &id in local_guild_id_set.intersection(&latest_guild_id_set) {
+        // 該当するギルドIDを持つAPIのギルド情報をguildテーブルの行へ更新
+        let my_guild =
+            latest_my_guilds
+                .iter()
+                .find(|my_guild| my_guild.id == id);
+        if let Some(my_guild) = my_guild {
+            update_guild_by_id(
+                &pool,
+                my_guild.id,
+                &my_guild.name,
+            ).await?;
+        }
+    }
+
+    // guildテーブルに存在し、APIにないギルドIDが存在
+    for &id in local_guild_id_set.difference(&latest_guild_id_set) {
+        // 該当するギルドIDをguildテーブルから削除
+        delete_guild_by_id(
+            &pool,
+            id,
+        ).await?;
+    }
+
+    // APIに存在し、guildテーブルにないギルドIDが存在
+    for &id in latest_guild_id_set.difference(&local_guild_id_set) {
+        // 該当するギルドIDを持つAPIをguildテーブルの行に追加
+        let my_guild = latest_my_guilds
+            .iter()
+            .find(|my_guild| my_guild.id == id);
+        insert_guild_by_id(
+            &pool,
+            id,
+            my_guild.map(|g| g.name.as_str()),
+        ).await?;
+    }
+    // -----------------------------------------------------------------------------------------------------
+
+
+    // --- ギルドメンバー情報更新  ------------------------------------------------------------------------
+    // guild_memberテーブルからギルドIDごとの「ギルドID, メンバーIDのリスト」のマップを取得
+    let rows = select_members(&pool).await?;
+    let mut member_ids_map_by_guild: HashMap<i64, Vec<i64>> = HashMap::new();
+    for GuildMember { guild_id, member_id, birth: _, last_notified: _ } in rows {
+        member_ids_map_by_guild.entry(guild_id).or_default().push(member_id);
+    }
+
+    // guild_memberテーブルから取得したギルドIDごとのメンバーIDのリストに
+    // 「APIで取得したメンバーIDが存在するか」一つずつ検索
+    for MyGuild { id, name: _, members: _ } in &latest_my_guilds {
+        let latest_guild_id = id.clone();
+        let latest_guild_members_set_by_guild: HashSet<&MyGuildMember> =
+            latest_my_guilds
+                .iter()
+                .filter(|my_guild| my_guild.id == latest_guild_id)
+                .flat_map(|my_guild| my_guild.members.iter())
+                .collect();
+
+        let local_member_id_set: HashSet<i64> =
+            member_ids_map_by_guild
+                .get(&latest_guild_id)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+
+        let latest_member_id_set: HashSet<i64> =
+            latest_guild_members_set_by_guild
+                .iter()
+                .map(|member| member.member_id)
+                .collect();
+
+        // APIとテーブルのメンバーIDが一致
+        for &id in local_member_id_set.intersection(&latest_member_id_set) {
+            // 該当するメンバーIDを持つAPIのメンバー情報をguild_memberテーブルの行へ更新
+            let member =
+                latest_guild_members_set_by_guild
+                    .iter()
+                    .find(|member| member.member_id == id);
+            if let Some(_) = member {
+                // メンバー情報を更新する内容があれば、ここに処理を置く
+            }
+        }
+
+        // guild_memberテーブルに存在し、APIにないメンバーIDが存在
+        for &id in local_member_id_set.difference(&latest_member_id_set) {
+            // 該当するメンバーIDをguild_memberテーブルから削除
+            delete_guild_member(
+                &pool,
+                latest_guild_id,
+                id,
+            ).await?;
+        }
+
+
+        // APIに存在し、guild_memberテーブルにないメンバーIDが存在
+        for &id in latest_member_id_set.difference(&local_member_id_set) {
+            // 該当するメンバーIDを持つAPIをguild_memberテーブルの行に追加
+            let member = latest_guild_members_set_by_guild
+                .iter()
+                .find(|member| member.member_id == id);
+            if let Some(member) = member {
+                insert_guild_member(
+                    &pool,
+                    latest_guild_id,
+                    member.member_id,
+                    member.birth,
+                ).await?;
+            }
+        }
+    }
+    // -----------------------------------------------------------------------------------------------------
+
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -292,6 +296,7 @@ struct GuildMember {
     guild_id: i64,
     member_id: i64,
     birth: Option<NaiveDate>,
+    last_notified: Option<NaiveDate>,
 }
 
 
@@ -390,6 +395,17 @@ async fn select_members(
     Ok(rows)
 }
 
+async fn select_members_by_guild_id(
+    pool: &PgPool,
+    guild_id: i64,
+) -> anyhow::Result<Vec<GuildMember>> {
+    let rows = sqlx::query_as::<_, GuildMember>("SELECT * FROM guild_member WHERE guild_id = $1")
+        .bind(guild_id)
+        .fetch_all(pool)
+        .await?;
+    Ok(rows)
+}
+
 async fn select_member_by_id(
     pool: &PgPool,
     guild_id: i64,
@@ -467,51 +483,75 @@ async fn insert_guild_member(
     Ok(())
 }
 
+async fn update_guild_member_last_notified(
+    pool: &PgPool,
+    guild_id: i64,
+    member_id: i64,
+    last_notified: NaiveDate,
+) -> anyhow::Result<()> {
+    sqlx::query!(
+        r#"
+        UPDATE guild_member
+        SET last_notified = $1
+        WHERE guild_id = $2 AND member_id = $3
+        "#,
+        last_notified,
+        guild_id,
+        member_id,
+    )
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 async fn birthday_cron_worker(
     pool: PgPool,
     http: Arc<Http>,
 ) -> anyhow::Result<()> {
+    // 初回の誕生日チェックまでの時間を調節
+    let now = Tokyo.from_utc_datetime(&Local::now().naive_utc());
+    let noon = NaiveTime::from_hms_opt(21, 50, 0).expect("Invalid time.");
+    let today_noon = now.date_naive().and_time(noon);
+    let next_noon = if now.naive_local() < today_noon {
+        today_noon
+    } else {
+        // 通知チェックの時刻を過ぎていた場合は、チェック時刻を明日に振替
+        today_noon + chrono::Duration::days(1)
+    };
+    let wait = u64::try_from((next_noon - now.naive_local()).num_seconds().max(0))?;
+    sleep(Duration::from_secs(wait)).await;
+
+    // 誕生日チェック
+    check_member_birth(&pool, &http).await?;
+
+    // 以降は24時間ごとに正午(12:00)のタイミングで誕生日チェック実行
     loop {
-        // 現在時刻
-        let now = Local::now();
-        // 今日の12:00
-        let today_noon = now.date_naive().and_time(NaiveTime::from_hms_opt(12, 0, 0).unwrap());
-        // 次の実行時刻
-        let next_noon = if now.naive_local() < today_noon {
-            today_noon
-        } else {
-            (now.date_naive() + chrono::Duration::days(1)).and_time(NaiveTime::from_hms_opt(12, 0, 0).unwrap())
-        };
-        let wait = (next_noon - now.naive_local()).num_seconds().max(0) as u64;
-        sleep(Duration::from_secs(wait)).await;
-
-        // ここで誕生日チェック処理
-        check(&pool, &http).await?;
-
-        // 以降は24時間ごとに実行
-        loop {
-            sleep(Duration::from_secs(60 * 60 * 24)).await;
-            // ここで誕生日チェック処理
-            check(&pool, &http).await?;
-        }
+        sleep(Duration::from_secs(60)).await;
+        // sleep(Duration::from_secs(60 * 60 * 24)).await;
+        check_member_birth(&pool, &http).await?;
     }
 }
 
 
-async fn check(pool: &PgPool, http: &Http) -> anyhow::Result<()> {
+async fn check_member_birth(pool: &PgPool, http: &Http) -> anyhow::Result<()> {
     let member_ids_map_by_guild = select_members(pool).await?;
-    for GuildMember { guild_id, member_id, birth } in member_ids_map_by_guild {
+    for GuildMember { guild_id, member_id, birth, last_notified } in member_ids_map_by_guild {
         if let Some(birth) = birth {
             let guild_id = GuildId::new(u64::try_from(guild_id)?);
             let channels = guild_id.channels(http).await?;
+            let now = Tokyo.from_utc_datetime(&Local::now().naive_utc());
             if let Some((_, channel)) = channels.iter()
                 .find(|(_, ch)| {
-                    ch.kind == ChannelType::Text &&
-                        (ch.name == "一般" || ch.name == "general")
-                })
+                    // ch.kind == ChannelType::Text && (ch.name == "一般" || ch.name == "general")
+                    ch.kind == ChannelType::Text && ch.name == "bot"
+                } && (last_notified.is_none() || last_notified.is_some_and(|last| last.year() < now.year()))
+                    && birth.month() == now.date_naive().month()
+                    && birth.day() == now.day())
             {
+                let member_id: i64 = 312936834264989696;
+                let guild_id: GuildId = GuildId::new(1393513606548553758);
                 let mention = format!("<@{}>", member_id);
-                let main_content = format!("(テスト(実際は誕生日じゃないよ🙃) )\n@here\n今日は「🎂 {} さんのお誕生日 🎂」！\n\n今年も自分らしい１年を過ごせるとよきなのだ！！！", mention);
+                let main_content = format!("@here\n今日は「🎂 {} さんのお誕生日 🎂」！\n\n今年も自分らしい１年を過ごせるとよきなのだ！！！", mention);
                 let member = guild_id.member(http, u64::try_from(member_id)?).await?;
                 let msg = channel.id.send_message(http, CreateMessage::new()
                     .content(main_content)
@@ -531,6 +571,12 @@ async fn check(pool: &PgPool, http: &Http) -> anyhow::Result<()> {
                         .reference_message(&msg),
                     )
                     .await?;
+                update_guild_member_last_notified(
+                    pool,
+                    i64::from(guild_id),
+                    member_id,
+                    now.date_naive(),
+                ).await?;
             }
         }
     }
