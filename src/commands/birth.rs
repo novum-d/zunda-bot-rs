@@ -8,7 +8,6 @@ pub enum BirthAction {
     Reset,
 }
 
-/// 誕生日コマンド
 #[poise::command(slash_command)]
 pub async fn birth(
     ctx: Context<'_>,

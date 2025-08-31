@@ -98,7 +98,6 @@ impl GuildRepository {
         Ok(())
     }
 
-    /// ギルドの情報を取得する関数
     pub async fn fetch_my_guild(&self, guild_id: &GuildId) -> anyhow::Result<MyGuild> {
         let partial_guild = self.http.get_guild(guild_id.clone()).await?;
         let members = partial_guild
@@ -121,7 +120,6 @@ impl GuildRepository {
         })
     }
 
-    /// ボットが所属するギルドIDのリストを取得する関数
     pub async fn fetch_my_guild_ids(&self) -> anyhow::Result<Vec<GuildId>> {
         let guilds = self.http.get_guilds(None, None).await?;
         Ok(guilds.into_iter().map(|g| g.id).collect())

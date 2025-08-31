@@ -14,7 +14,6 @@ impl ZundaBotDatabase {
         Ok(ZundaBotDatabase { pool })
     }
 
-    /// DBからギルドIDのリストを取得するメソッド
     pub async fn select_guild_ids(&self) -> anyhow::Result<Vec<i64>> {
         let guild_ids = sqlx::query_scalar!(
             r#"
@@ -63,7 +62,6 @@ impl ZundaBotDatabase {
         Ok(row)
     }
 
-    /// DBのギルド情報を更新するメソッド
     pub async fn update_guild(&self, guild_id: i64, guild_name: &str) -> anyhow::Result<()> {
         let guild_id: i64 = guild_id.try_into()?;
 
@@ -124,7 +122,6 @@ impl ZundaBotDatabase {
         Ok(())
     }
 
-    /// DBのギルド情報を削除するメソッド
     pub async fn delete_guild(&self, guild_id: i64) -> anyhow::Result<()> {
         sqlx::query!(
             r#"
