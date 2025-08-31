@@ -1,4 +1,4 @@
-use crate::{Context, Error};
+use crate::models::common::{Context, Error};
 
 /// あいさつのメッセージを返すコマンド
 #[poise::command(slash_command)]

@@ -1,14 +1,10 @@
-use crate::{select_member_by_id, select_members_by_guild_id, update_guild_member_birth, update_guilds, Context, Error};
-use chrono::NaiveDate;
-use poise::futures_util::future::join_all;
-use poise::{ChoiceParameter, CreateReply, Modal};
-use serenity::all::CreateEmbed;
+use crate::models::common::{Context, Error};
+use poise::ChoiceParameter;
 
 #[derive(ChoiceParameter)]
 pub enum BirthAction {
     List,
     Signup,
-    Edit,
     Reset,
 }
 
@@ -17,100 +13,19 @@ pub enum BirthAction {
 pub async fn birth(
     ctx: Context<'_>,
     #[description = "操作"] action: BirthAction,
-) -> Result<(), Error> {
-    let http = ctx.http();
-    let pool = &ctx.data().pool;
-    update_guilds(pool, http).await?;
+) -> anyhow::Result<(), Error> {
+    ctx.data().guild_update_usecase.invoke().await?;
 
     match action {
         BirthAction::List => {
-            let guild_id = ctx.guild_id().expect("Could not retrieve the Guild ID.");
-            let members = select_members_by_guild_id(pool, i64::from(guild_id)).await?;
-            let birth_list = join_all(members.into_iter().map(|member| async move {
-                let latest_member_id = u64::try_from(member.member_id).ok()?;
-                let latest_member = guild_id.member(http, latest_member_id).await.ok()?;
-                member.birth.map(|birth| {
-                    format!(
-                        "・{}: {}\n",
-                        latest_member.display_name(),
-                        birth.format("%m/%d"),
-                    )
-                })
-            })).await
-                .into_iter()
-                .filter_map(|x| x)
-                .collect::<Vec<_>>();
-
-            if birth_list.is_empty() {
-                ctx.send(CreateReply::default()
-                    .embed(CreateEmbed::new()
-                        .title("⚠️ 誕生日が登録されていないのだ")
-                        .color(0xff9900)) // オレンジ色
-                    .ephemeral(true))
-                    .await?;
-            } else {
-                let content = format!("# 誕生日リスト\n{}", birth_list.join(""));
-                ctx.send(CreateReply::default().content(content)).await?;
-            }
+            ctx.data().birth_list_usecase.invoke(ctx).await?;
         }
         BirthAction::Signup => {
-            let guild_id = i64::from(ctx.guild_id().expect("Could not retrieve the Guild ID."));
-            let member_id = i64::from(ctx.author().id);
-
-            let member = select_member_by_id(
-                pool,
-                guild_id,
-                member_id,
-            ).await?;
-
-            if let Some(member) = member {
-                if let None = member.birth {
-                    if let Context::Application(app_ctx) = ctx {
-                        let data = BirthSignupModal::execute(app_ctx).await?;
-                        if let Some(data) = data {
-                            let birth = NaiveDate::parse_from_str(&data.birth_input, "%Y-%m-%d")?;
-                            update_guild_member_birth(
-                                pool,
-                                guild_id,
-                                member_id,
-                                birth,
-                            ).await?;
-
-                            ctx.send(CreateReply::default()
-                                .embed(CreateEmbed::new()
-                                    .title("✅  誕生日の登録が完了したのだ。")
-                                    .color(0x00ff00)) // オレンジ色
-                                .content("登録したた日付の12時に誕生日が通知されるのだ。")
-                                .ephemeral(true))
-                                .await?;
-                        }
-                    }
-                } else {
-                    ctx.send(CreateReply::default()
-                        .embed(CreateEmbed::new()
-                            .title("⚠️ 誕生日はすでに登録済みなのだ")
-                            .color(0xff9900)) // オレンジ色
-                        .ephemeral(true))
-                        .await?;
-                }
-            }
+            ctx.data().birth_signup_usecase.invoke(ctx).await?;
         }
-        BirthAction::Edit => {}
-        BirthAction::Reset => {}
+        BirthAction::Reset => {
+            ctx.data().birth_reset_usecase.invoke(ctx).await?;
+        }
     }
     Ok(())
-}
-
-
-#[derive(Debug, Modal)]
-#[name = "誕生日の通知登録"] // 最初のタイトル
-struct BirthSignupModal {
-    #[name = "自身の誕生日を入力するのだ"] // フィールドのタイトル
-    #[placeholder = "1999-12-10"]
-    #[min_length = 10]
-    #[max_length = 10]
-    birth_input: String,
-    // #[name = "2番目の入力ラベル"],
-    // #[paragraph] // 単一行から複数行テキストボックスに変更
-    // second_input: Option<String>, // Optionは任意入力を意味
 }
