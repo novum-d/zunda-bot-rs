@@ -37,15 +37,11 @@ impl BirthNotifyUsecase {
                 let now = Tokyo.from_utc_datetime(&Local::now().naive_utc());
                 if let Some((_, channel)) = channels.iter()
                     .find(|(_, ch)| {
-                        // ch.kind == ChannelType::Text && (ch.name == "一般" || ch.name == "general")
-                        ch.kind == ChannelType::Text && ch.name == "bot"
-                    } && (last_notified.is_none() || last_notified.is_some_and(|last| last.year() < now.year()))
+                        ch.kind == ChannelType::Text && (ch.name == "一般" || ch.name == "general")
+                    } && (last_notified.is_none() || last_notified.is_some_and(|last_notified| last_notified.year() < now.year()))
                         && birth.month() == now.date_naive().month()
                         && birth.day() == now.day())
                 {
-                    // TODO: 削除
-                    let member_id: i64 = 312936834264989696;
-                    let guild_id: GuildId = GuildId::new(1393513606548553758);
                     let mention = format!("<@{}>", member_id);
                     let main_content = format!("@here\n今日は「🎂 {} さんのお誕生日 🎂」！\n\n今年も自分らしい１年を過ごせるとよきなのだ！！！", mention);
                     let member = guild_id.member(http, u64::try_from(member_id)?).await?;

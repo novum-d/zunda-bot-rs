@@ -5,7 +5,6 @@ mod usecase;
 mod worker;
 
 use crate::commands::birth::birth;
-use crate::commands::handler::CommandHandler;
 use crate::models::common::Data;
 use crate::usecase::birth_list_usecase::BirthListUsecase;
 use crate::usecase::birth_notify_usecase::BirthNotifyUsecase;
@@ -76,7 +75,6 @@ async fn main(
         .build();
 
     let client = Client::builder(&token, intents)
-        .event_handler(CommandHandler {})
         .framework(framework)
         .await
         .map_err(shuttle_runtime::CustomError::new)?;

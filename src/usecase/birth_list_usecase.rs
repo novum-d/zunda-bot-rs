@@ -41,10 +41,10 @@ impl BirthListUsecase {
                 )
             })
         }))
-            .await
-            .into_iter()
-            .filter_map(|x| x)
-            .collect::<Vec<_>>();
+        .await
+        .into_iter()
+        .filter_map(|x| x)
+        .collect::<Vec<_>>();
 
         if birth_list.is_empty() {
             poise_ctx
@@ -53,8 +53,8 @@ impl BirthListUsecase {
                         .embed(
                             CreateEmbed::new()
                                 .title("⚠️ 誕生日が登録されていないのだ")
-                                .color(0xff9900),
-                        ) // オレンジ色
+                                .color(0xffd700), // 警告系の色
+                        )
                         .ephemeral(true),
                 )
                 .await?;

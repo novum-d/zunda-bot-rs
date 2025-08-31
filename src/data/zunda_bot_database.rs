@@ -20,16 +20,16 @@ impl ZundaBotDatabase {
         SELECT guild_id::BIGINT FROM guild
         "#
         )
-            .fetch_all(&*self.pool)
-            .await?
-            .into_iter()
-            .filter_map(|guild_id: i64| Some(guild_id))
-            .collect::<Vec<i64>>();
+        .fetch_all(&*self.pool)
+        .await?
+        .into_iter()
+        .filter_map(|guild_id: i64| Some(guild_id))
+        .collect::<Vec<i64>>();
         Ok(guild_ids)
     }
 
     pub async fn select_members(&self) -> anyhow::Result<Vec<GuildMember>> {
-        let rows = sqlx::query_as::<_, GuildMember>("SELECT * FROM guild_member")
+        let rows = sqlx::query_as!(GuildMember, r#"SELECT * FROM guild_member"#)
             .fetch_all(&*self.pool)
             .await?;
         Ok(rows)
@@ -39,11 +39,13 @@ impl ZundaBotDatabase {
         &self,
         guild_id: i64,
     ) -> anyhow::Result<Vec<GuildMember>> {
-        let rows =
-            sqlx::query_as::<_, GuildMember>("SELECT * FROM guild_member WHERE guild_id = $1")
-                .bind(guild_id)
-                .fetch_all(&*self.pool)
-                .await?;
+        let rows = sqlx::query_as!(
+            GuildMember,
+            r#"SELECT * FROM guild_member WHERE guild_id = $1"#,
+            guild_id
+        )
+        .fetch_all(&*self.pool)
+        .await?;
         Ok(rows)
     }
 
@@ -52,13 +54,14 @@ impl ZundaBotDatabase {
         guild_id: i64,
         member_id: i64,
     ) -> anyhow::Result<Option<GuildMember>> {
-        let row = sqlx::query_as::<_, GuildMember>(
+        let row = sqlx::query_as!(
+            GuildMember,
             "SELECT * FROM guild_member WHERE guild_id = $1 AND member_id = $2",
+            guild_id,
+            member_id
         )
-            .bind(guild_id)
-            .bind(member_id)
-            .fetch_optional(&*self.pool)
-            .await?;
+        .fetch_optional(&*self.pool)
+        .await?;
         Ok(row)
     }
 
@@ -74,8 +77,8 @@ impl ZundaBotDatabase {
             guild_name,
             guild_id,
         )
-            .execute(&*self.pool)
-            .await?;
+        .execute(&*self.pool)
+        .await?;
 
         Ok(())
     }
@@ -96,8 +99,27 @@ impl ZundaBotDatabase {
             guild_id,
             member_id,
         )
-            .execute(&*self.pool)
-            .await?;
+        .execute(&*self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn update_member_birth_none(
+        &self,
+        guild_id: i64,
+        member_id: i64,
+    ) -> anyhow::Result<()> {
+        sqlx::query!(
+            r#"
+        UPDATE guild_member
+        SET birth = NULL, last_notified = NULL
+        WHERE guild_id = $1 AND member_id = $2
+        "#,
+            guild_id,
+            member_id,
+        )
+        .execute(&*self.pool)
+        .await?;
         Ok(())
     }
 
@@ -117,8 +139,8 @@ impl ZundaBotDatabase {
             guild_id,
             member_id,
         )
-            .execute(&*self.pool)
-            .await?;
+        .execute(&*self.pool)
+        .await?;
         Ok(())
     }
 
@@ -130,8 +152,8 @@ impl ZundaBotDatabase {
         "#,
             guild_id,
         )
-            .execute(&*self.pool)
-            .await?;
+        .execute(&*self.pool)
+        .await?;
 
         sqlx::query!(
             r#"
@@ -140,8 +162,8 @@ impl ZundaBotDatabase {
         "#,
             guild_id,
         )
-            .execute(&*self.pool)
-            .await?;
+        .execute(&*self.pool)
+        .await?;
         Ok(())
     }
 
@@ -154,8 +176,8 @@ impl ZundaBotDatabase {
             guild_id,
             member_id,
         )
-            .execute(&*self.pool)
-            .await?;
+        .execute(&*self.pool)
+        .await?;
         Ok(())
     }
 
@@ -173,8 +195,8 @@ impl ZundaBotDatabase {
             guild_id,
             guild_name,
         )
-            .execute(&*self.pool)
-            .await?;
+        .execute(&*self.pool)
+        .await?;
         Ok(())
     }
 
@@ -194,8 +216,8 @@ impl ZundaBotDatabase {
             member_id,
             birth,
         )
-            .execute(&*self.pool)
-            .await?;
+        .execute(&*self.pool)
+        .await?;
         Ok(())
     }
 }

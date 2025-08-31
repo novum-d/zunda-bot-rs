@@ -81,6 +81,14 @@ impl GuildRepository {
         Ok(())
     }
 
+    pub async fn reset_member_birth(&self, guild_id: i64, member_id: i64) -> anyhow::Result<()> {
+        self.db
+            .update_member_birth_none(guild_id, member_id)
+            .await?;
+
+        Ok(())
+    }
+
     pub async fn update_guild(&self, guild_id: i64, guild_name: &str) -> anyhow::Result<()> {
         self.db.update_guild(guild_id, guild_name).await?;
         Ok(())

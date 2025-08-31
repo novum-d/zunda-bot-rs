@@ -10,8 +10,7 @@ impl AnnualBirthdayNotifier {
     pub async fn new(birth_notify_usecase: BirthNotifyUsecase) -> anyhow::Result<(), Error> {
         // 初回の誕生日チェックまでの時間を調節
         let now = Tokyo.from_utc_datetime(&Local::now().naive_utc());
-        // TODO: 置き換え
-        let noon = NaiveTime::from_hms_opt(21, 50, 0).expect("Invalid time.");
+        let noon = NaiveTime::from_hms_opt(12, 0, 0).expect("Invalid time.");
         let today_noon = now.date_naive().and_time(noon);
         let next_noon = if now.naive_local() < today_noon {
             today_noon
@@ -28,9 +27,7 @@ impl AnnualBirthdayNotifier {
 
         // 以降は24時間ごとに正午(12:00)のタイミングで誕生日チェック実行
         loop {
-            tokio::time::sleep(Duration::from_secs(60)).await;
-            // TODO: 置き換え
-            // sleep(Duration::from_secs(60 * 60 * 24)).await;
+            tokio::time::sleep(Duration::from_secs(60 * 60 * 24)).await;
             birth_notify_usecase.invoke().await?;
         }
     }

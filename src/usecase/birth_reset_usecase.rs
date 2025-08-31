@@ -1,9 +1,13 @@
 use crate::data::guild_repository::GuildRepository;
 use crate::models::common::{Context, Error};
 use poise::CreateReply;
-use serenity::all::{CreateActionRow, CreateButton, CreateEmbed, Http};
+use serenity::all::{
+    CreateActionRow, CreateButton, CreateEmbed, CreateInteractionResponse,
+    CreateInteractionResponseMessage, Http,
+};
 use sqlx::PgPool;
 use std::sync::Arc;
+use std::time::Duration;
 
 pub struct BirthResetUsecase {
     guild_repo: GuildRepository,
@@ -12,9 +16,7 @@ pub struct BirthResetUsecase {
 impl BirthResetUsecase {
     pub fn new(pool: Arc<PgPool>, http: Arc<Http>) -> anyhow::Result<Self> {
         let guild_repo = GuildRepository::new(pool, http.clone())?;
-        Ok(BirthResetUsecase {
-            guild_repo,
-        })
+        Ok(BirthResetUsecase { guild_repo })
     }
 
     pub async fn invoke(&self, poise_ctx: Context<'_>) -> anyhow::Result<(), Error> {
@@ -38,8 +40,8 @@ impl BirthResetUsecase {
                         .embed(
                             CreateEmbed::new()
                                 .title("⚠️ 誕生日が登録されていないのだ")
-                                .color(0xff9900),
-                        ) // オレンジ色
+                                .color(0xffd700), // 警告系の色
+                        )
                         .ephemeral(true),
                 )
                 .await?;
@@ -50,14 +52,44 @@ impl BirthResetUsecase {
 
             let action_row = CreateActionRow::Buttons(vec![reset_button]);
 
-            poise_ctx
+            let msg = poise_ctx
                 .send(
                     CreateReply::default()
-                        .content("誕生日の通知登録を解除してもいいのだ？")
-                        .embed(CreateEmbed::new().title("確認"))
-                        .components(vec![action_row]),
+                        .content("誕生日の通知登録を解除してもいいのだ👀？")
+                        .components(vec![action_row])
+                        .ephemeral(true),
                 )
                 .await?;
+
+            if let Some(interaction) = msg
+                .message()
+                .await?
+                .await_component_interaction(&poise_ctx.serenity_context().shard)
+                .timeout(Duration::from_secs(60))
+                .await
+            {
+                if interaction.data.custom_id == "reset" {
+                    self.guild_repo
+                        .reset_member_birth(guild_id, member_id)
+                        .await?;
+                    msg.delete(poise_ctx).await?;
+
+                    let response = CreateInteractionResponse::Message(
+                        CreateInteractionResponseMessage::new()
+                            .embed(
+                                CreateEmbed::new()
+                                    .title("🗑️ 誕生日の通知登録を解除したのだ。")
+                                    .description("登録した日付はリセットされたのだ。")
+                                    .color(0x00ff00), // 正常系の色
+                            ) // オレンジ色
+                            .ephemeral(true),
+                    );
+                    interaction
+                        .create_response(poise_ctx.http(), response)
+                        .await
+                        .unwrap_or_default();
+                }
+            }
         }
         Ok(())
     }
