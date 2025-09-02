@@ -1,5 +1,6 @@
 use crate::data::guild_repository::GuildRepository;
 use crate::models::common::{Context, Error};
+use chrono::Datelike;
 use poise::futures_util::future::join_all;
 use poise::CreateReply;
 use serenity::all::{CreateEmbed, Http};
@@ -24,46 +25,57 @@ impl BirthListUsecase {
         let guild_id = poise_ctx.guild_id().ok_or_else(|| {
             let err_msg = "Could not retrieve the Guild ID.";
             tracing::error!(err_msg);
-            anyhow::anyhow!(err_msg)
-        })?;
-        let members = self
+        }).unwrap_or_default();
+        let mut members = self
             .guild_repo
             .get_members_by_guild_id(i64::from(guild_id))
             .await?;
-        let birth_list = join_all(members.into_iter().map(|member| async move {
-            let latest_member_id = u64::try_from(member.member_id).ok()?;
-            let latest_member = guild_id.member(&self.http, latest_member_id).await.ok()?;
-            member.birth.map(|birth| {
-                format!(
-                    "・{}: {}\n",
-                    latest_member.display_name(),
-                    birth.format("%m/%d"),
-                )
-            })
-        }))
-        .await
-        .into_iter()
-        .filter_map(|x| x)
-        .collect::<Vec<_>>();
-
-        if birth_list.is_empty() {
-            poise_ctx
-                .send(
-                    CreateReply::default()
-                        .embed(
-                            CreateEmbed::new()
-                                .title("⚠️ 誕生日が登録されていないのだ")
-                                .color(0xffd700), // 警告系の色
+        members.sort_by_key(|m| m.birth.map(|b| (b.month(), b.day())));
+        let birth_features = members
+            .into_iter()
+            .filter(|member| member.birth.is_some())
+            .map(move |member| {
+                async move {
+                    let latest_member_id = u64::try_from(member.member_id).ok()?;
+                    let latest_member = guild_id.member(&self.http, latest_member_id).await.ok()?;
+                    member.birth.map(|birth| {
+                        format!(
+                            "・{}: {}\n",
+                            birth.format("%m/%d"),
+                            latest_member.display_name(),
                         )
-                        .ephemeral(true),
+                    })
+                }
+            });
+        let birth_list = join_all(birth_features)
+            .await
+            .into_iter()
+            .filter_map(|x| x)
+            .collect::<Vec<_>>();
+
+        let reply = if birth_list.is_empty() {
+            CreateReply::default()
+                .embed(
+                    CreateEmbed::new()
+                        .title("⚠️ 誕生日が登録されていないのだ")
+                        .color(0xffd700), // 警告系の色
                 )
-                .await?;
+                .ephemeral(true)
         } else {
-            let content = format!("# 誕生日リスト\n{}", birth_list.join(""));
-            poise_ctx
-                .send(CreateReply::default().content(content))
-                .await?;
-        }
+            CreateReply::default()
+                .embed(
+                    CreateEmbed::new()
+                        .title("🎉 誕生日リスト")
+                        .description(birth_list.join(""))
+                        .color(0x00ff00), // 正常系の色
+                )
+                .ephemeral(true)
+        };
+
+        poise_ctx
+            .send(reply)
+            .await?;
+
         Ok(())
     }
 }

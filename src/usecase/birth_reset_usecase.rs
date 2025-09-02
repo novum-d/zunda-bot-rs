@@ -23,8 +23,7 @@ impl BirthResetUsecase {
         let guild_id = poise_ctx.guild_id().map(i64::from).ok_or_else(|| {
             let err_msg = "Could not retrieve the Guild ID.";
             tracing::error!(err_msg);
-            anyhow::anyhow!(err_msg)
-        })?;
+        }).unwrap_or_default();
 
         let member_id = i64::from(poise_ctx.author().id);
 

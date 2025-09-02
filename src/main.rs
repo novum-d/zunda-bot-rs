@@ -28,7 +28,6 @@ async fn main(
 ) -> shuttle_serenity::ShuttleSerenity {
     if let Err(e) = sqlx::migrate!("db/migrations").run(&pool).await {
         tracing::error!("Failed to run migrations: {:?}", e);
-        return Err(anyhow::anyhow!("Failed to run migrations.").into());
     }
 
     let token = secrets
