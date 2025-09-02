@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT * FROM guild_member WHERE guild_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "member_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "guild_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "birth",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 3,
+        "name": "last_notified",
+        "type_info": "Date"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "1dedc5bb3e82354de889ab50c7e9a22c20860f3f2e72c29d3d8acf860535e921"
+}
