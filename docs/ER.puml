@@ -1,0 +1,35 @@
+@startuml
+entity "guild" as guild {
+  +guild_id : BIGINT <<PK>>
+  --
+  *name      : VARCHAR(255)
+}
+note right of guild::guild_id
+ギルドを識別するID
+end note
+
+note right of guild::name
+ギルド名
+end note
+
+entity "guild_member" as member {
+  +member_id : BIGINT <<PK>>
+  +guild_id  : BIGINT <<PK,FK>>
+  --
+  birth      : TIMESTAMP
+}
+note right of member::member_id
+Discordユーザーを識別するID
+end note
+
+note right of member::guild_id
+ギルドを識別するID
+end note
+
+note right of member::birth
+ギルドに所属するメンバーの誕生日
+end note
+
+guild ||--o{ member : "ギルドに\n所属するメンバー"
+
+@enduml

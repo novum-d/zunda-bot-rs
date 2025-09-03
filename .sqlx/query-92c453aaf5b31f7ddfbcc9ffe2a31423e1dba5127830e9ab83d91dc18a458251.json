@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE guild_member\n        SET last_notified = $1\n        WHERE guild_id = $2 AND member_id = $3\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Date",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "92c453aaf5b31f7ddfbcc9ffe2a31423e1dba5127830e9ab83d91dc18a458251"
+}

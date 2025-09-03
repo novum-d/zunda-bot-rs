@@ -1,47 +1,74 @@
 mod commands;
+mod data;
+mod models;
+mod usecase;
+mod worker;
 
-use commands::hello::hello;
+use crate::commands::birth::birth;
+use crate::models::common::Data;
+use crate::usecase::birth_list_usecase::BirthListUsecase;
+use crate::usecase::birth_notify_usecase::BirthNotifyUsecase;
+use crate::usecase::birth_reset_usecase::BirthResetUsecase;
+use crate::usecase::birth_signup_usecase::BirthSignupUsecase;
+use crate::usecase::guild_update_usecase::GuildUpdateUsecase;
+use crate::worker::annual_birthday_notifier::AnnualBirthdayNotifier;
 use anyhow::Context as _;
-use serenity::prelude::*;
-use shuttle_runtime::SecretStore;
+use commands::hello::hello;
 use poise::serenity_prelude as serenity;
 use serenity::model::gateway::GatewayIntents;
-
-/// `Data`構造体は、Botコマンド実行時に毎回アクセスできる「ユーザーデータ」を格納するための型
-/// この型にフィールドを追加することで、コマンド間で共有したい情報（設定値や状態など）を保持できる
-/// `poise`フレームワークでは、各コマンドの`Context`からこの`Data`にアクセスできる
-struct Data {} // User data, which is stored and accessible in all command invocations
-type Error = Box<dyn std::error::Error + Send + Sync>;
-type Context<'a> = poise::Context<'a, Data, Error>;
-
+use serenity::Client;
+use shuttle_runtime::SecretStore;
+use sqlx::PgPool;
+use std::sync::Arc;
 
 #[shuttle_runtime::main]
-async fn serenity(
+async fn main(
     #[shuttle_runtime::Secrets] secrets: SecretStore,
+    #[shuttle_shared_db::Postgres()] pool: PgPool, // local_uriを指定するとエラーになるので記述しない
 ) -> shuttle_serenity::ShuttleSerenity {
-    // `Secrets.toml`からトークンを取得
+    if let Err(e) = sqlx::migrate!("db/migrations").run(&pool).await {
+        tracing::error!("Failed to run migrations: {:?}", e);
+    }
+
     let token = secrets
         .get("DISCORD_TOKEN")
         .context("'DISCORD_TOKEN' was not found")?;
 
-    // インテントを設定
-    let intents = GatewayIntents::GUILD_MESSAGES
+    let intents = GatewayIntents::GUILD_MEMBERS // ギルドメンバー情報取得権限
+        | GatewayIntents::GUILD_MESSAGES // ギルド内のメッセージイベント受信権限
         | GatewayIntents::DIRECT_MESSAGES
         | GatewayIntents::MESSAGE_CONTENT;
 
-    // コマンドを作成
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: vec![
                 // コマンドはここに追加
                 hello(),
+                birth(),
             ],
             ..Default::default()
         })
         .setup(|ctx, _ready, framework| {
+            let pool = Arc::new(pool);
             Box::pin(async move {
+                let birth_list_usecase = BirthListUsecase::new(pool.clone(), ctx.http.clone())?;
+                let birth_signup_usecase = BirthSignupUsecase::new(pool.clone(), ctx.http.clone())?;
+                let birth_reset_usecase = BirthResetUsecase::new(pool.clone(), ctx.http.clone())?;
+                let birth_notify_usecase = BirthNotifyUsecase::new(pool.clone(), ctx.http.clone())?;
+                let guild_update_usecase = GuildUpdateUsecase::new(pool.clone(), ctx.http.clone())?;
+                guild_update_usecase.invoke().await?;
+
+                tokio::spawn(AnnualBirthdayNotifier::new(birth_notify_usecase));
+
                 poise::builtins::register_globally(ctx, &framework.options().commands).await?;
-                Ok(Data {})
+
+                let data = Data {
+                    birth_list_usecase,
+                    birth_signup_usecase,
+                    birth_reset_usecase,
+                    guild_update_usecase,
+                };
+                Ok(data)
             })
         })
         .build();

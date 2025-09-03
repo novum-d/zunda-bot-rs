@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE guild_member\n        SET birth = $1\n        WHERE guild_id = $2 AND member_id = $3\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Date",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fbd3031dbe374f7c96de8091092243cd6d9926fcc3a13d233502c4e73e367a6f"
+}

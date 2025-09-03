@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        DELETE FROM guild_member\n        WHERE guild_id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3653c74f70c8410fdf4e88cce3f3754566267ad25462d492cc8a6ea4ad9b6d49"
+}

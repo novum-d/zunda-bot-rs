@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE guild\n        SET name = $1\n        WHERE guild_id = $2\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a03d2ce82c3b596bc8c02513678fa0a9934941df79320c92881c4efc1719fd02"
+}
