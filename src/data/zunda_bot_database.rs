@@ -20,11 +20,11 @@ impl ZundaBotDatabase {
         SELECT guild_id::BIGINT FROM guild
         "#
         )
-        .fetch_all(&*self.pool)
-        .await?
-        .into_iter()
-        .filter_map(|guild_id: i64| Some(guild_id))
-        .collect::<Vec<i64>>();
+            .fetch_all(&*self.pool)
+            .await?
+            .into_iter()
+            .filter_map(|guild_id: i64| Some(guild_id))
+            .collect::<Vec<i64>>();
         Ok(guild_ids)
     }
 
@@ -44,8 +44,8 @@ impl ZundaBotDatabase {
             r#"SELECT * FROM guild_member WHERE guild_id = $1"#,
             guild_id
         )
-        .fetch_all(&*self.pool)
-        .await?;
+            .fetch_all(&*self.pool)
+            .await?;
         Ok(rows)
     }
 
@@ -60,14 +60,12 @@ impl ZundaBotDatabase {
             guild_id,
             member_id
         )
-        .fetch_optional(&*self.pool)
-        .await?;
+            .fetch_optional(&*self.pool)
+            .await?;
         Ok(row)
     }
 
     pub async fn update_guild(&self, guild_id: i64, guild_name: &str) -> anyhow::Result<()> {
-        let guild_id: i64 = guild_id.try_into()?;
-
         sqlx::query!(
             r#"
         UPDATE guild
@@ -77,8 +75,8 @@ impl ZundaBotDatabase {
             guild_name,
             guild_id,
         )
-        .execute(&*self.pool)
-        .await?;
+            .execute(&*self.pool)
+            .await?;
 
         Ok(())
     }
@@ -99,8 +97,8 @@ impl ZundaBotDatabase {
             guild_id,
             member_id,
         )
-        .execute(&*self.pool)
-        .await?;
+            .execute(&*self.pool)
+            .await?;
         Ok(())
     }
 
@@ -118,8 +116,8 @@ impl ZundaBotDatabase {
             guild_id,
             member_id,
         )
-        .execute(&*self.pool)
-        .await?;
+            .execute(&*self.pool)
+            .await?;
         Ok(())
     }
 
@@ -139,8 +137,8 @@ impl ZundaBotDatabase {
             guild_id,
             member_id,
         )
-        .execute(&*self.pool)
-        .await?;
+            .execute(&*self.pool)
+            .await?;
         Ok(())
     }
 
@@ -152,8 +150,8 @@ impl ZundaBotDatabase {
         "#,
             guild_id,
         )
-        .execute(&*self.pool)
-        .await?;
+            .execute(&*self.pool)
+            .await?;
 
         sqlx::query!(
             r#"
@@ -162,8 +160,8 @@ impl ZundaBotDatabase {
         "#,
             guild_id,
         )
-        .execute(&*self.pool)
-        .await?;
+            .execute(&*self.pool)
+            .await?;
         Ok(())
     }
 
@@ -176,8 +174,8 @@ impl ZundaBotDatabase {
             guild_id,
             member_id,
         )
-        .execute(&*self.pool)
-        .await?;
+            .execute(&*self.pool)
+            .await?;
         Ok(())
     }
 
@@ -195,8 +193,8 @@ impl ZundaBotDatabase {
             guild_id,
             guild_name,
         )
-        .execute(&*self.pool)
-        .await?;
+            .execute(&*self.pool)
+            .await?;
         Ok(())
     }
 
@@ -216,8 +214,8 @@ impl ZundaBotDatabase {
             member_id,
             birth,
         )
-        .execute(&*self.pool)
-        .await?;
+            .execute(&*self.pool)
+            .await?;
         Ok(())
     }
 }

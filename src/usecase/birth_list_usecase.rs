@@ -22,10 +22,14 @@ impl BirthListUsecase {
     }
 
     pub async fn invoke(&self, poise_ctx: Context<'_>) -> anyhow::Result<(), Error> {
-        let guild_id = poise_ctx.guild_id().ok_or_else(|| {
-            let err_msg = "Could not retrieve the Guild ID.";
-            tracing::error!(err_msg);
-        }).unwrap_or_default();
+        let guild_id = match poise_ctx.guild_id() {
+            Some(id) => id,
+            None => {
+                let err_msg = "Could not retrieve the Guild ID.";
+                tracing::error!(err_msg);
+                return Err(Error::from(anyhow::anyhow!(err_msg)));
+            }
+        };
         let mut members = self
             .guild_repo
             .get_members_by_guild_id(i64::from(guild_id))

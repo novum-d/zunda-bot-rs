@@ -20,10 +20,14 @@ impl BirthResetUsecase {
     }
 
     pub async fn invoke(&self, poise_ctx: Context<'_>) -> anyhow::Result<(), Error> {
-        let guild_id = poise_ctx.guild_id().map(i64::from).ok_or_else(|| {
-            let err_msg = "Could not retrieve the Guild ID.";
-            tracing::error!(err_msg);
-        }).unwrap_or_default();
+        let guild_id = match poise_ctx.guild_id() {
+            Some(id) => i64::from(id),
+            None => {
+                let err_msg = "Could not retrieve the Guild ID.";
+                tracing::error!(err_msg);
+                return Err(Error::from(anyhow::anyhow!(err_msg)));
+            }
+        };
 
         let member_id = i64::from(poise_ctx.author().id);
 
@@ -80,7 +84,7 @@ impl BirthResetUsecase {
                                     .title("🗑️ 誕生日の通知登録を解除したのだ。")
                                     .description("登録した日付はリセットされたのだ。")
                                     .color(0x00ff00), // 正常系の色
-                            ) // オレンジ色
+                            )
                             .ephemeral(true),
                     );
                     interaction
