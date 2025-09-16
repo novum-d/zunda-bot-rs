@@ -20,23 +20,24 @@ impl BirthResetUsecase {
     }
 
     pub async fn invoke(&self, poise_ctx: Context<'_>) -> anyhow::Result<(), Error> {
-        let guild_id = match poise_ctx.guild_id() {
-            Some(id) => i64::from(id),
-            None => {
-                let err_msg = "Could not retrieve the Guild ID.";
-                tracing::error!(err_msg);
-                return Err(Error::from(anyhow::anyhow!(err_msg)));
-            }
-        };
+        // コマンドが実行されたギルドのギルドIDを取得
+        let guild_id = self
+            .guild_repo
+            .fetch_guild_id_from_command(poise_ctx)
+            .await?;
+        let guild_id = i64::from(guild_id);
 
+        // コマンドを実行したメンバーのメンバーIDを取得
         let member_id = i64::from(poise_ctx.author().id);
 
+        // ギルドIDとメンバーIDに一致するメンバーの誕生日をguild_memberテーブルから取得;
         let member_birth = self
             .guild_repo
             .get_member_birth(guild_id, member_id)
             .await?;
 
         if let None = member_birth {
+            // 「誕生日が登録されていないこと」をメッセージで通知
             poise_ctx
                 .send(
                     CreateReply::default()
@@ -49,12 +50,11 @@ impl BirthResetUsecase {
                 )
                 .await?;
         } else {
+            // 誕生日解除の確認メッセージと「解除」ボタンを表示
             let reset_button = CreateButton::new("reset")
                 .label("解除")
                 .style(serenity::all::ButtonStyle::Danger);
-
             let action_row = CreateActionRow::Buttons(vec![reset_button]);
-
             let msg = poise_ctx
                 .send(
                     CreateReply::default()
@@ -63,20 +63,24 @@ impl BirthResetUsecase {
                         .ephemeral(true),
                 )
                 .await?;
+            let msg = msg.message().await?;
 
-            if let Some(interaction) = msg
-                .message()
-                .await?
+            let msg_interaction = msg
                 .await_component_interaction(&poise_ctx.serenity_context().shard)
                 .timeout(Duration::from_secs(60))
-                .await
-            {
+                .await;
+            if let Some(interaction) = msg_interaction {
                 if interaction.data.custom_id == "reset" {
+                    // ユーザーが「解除」ボタンを押下
+                    // guild_memberテーブルの誕生日と最終通知日をNULLに更新
                     self.guild_repo
                         .reset_member_birth(guild_id, member_id)
                         .await?;
+
+                    // 誕生日解除の確認メッセージと「解除」ボタンを削除
                     msg.delete(poise_ctx).await?;
 
+                    // 「誕生日通知が解除されたこと」をメッセージで通知
                     let response = CreateInteractionResponse::Message(
                         CreateInteractionResponseMessage::new()
                             .embed(

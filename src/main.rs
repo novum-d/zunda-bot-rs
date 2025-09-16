@@ -3,6 +3,7 @@ mod data;
 mod models;
 mod usecase;
 mod worker;
+mod res;
 
 use crate::commands::birth::birth;
 use crate::models::common::Data;
