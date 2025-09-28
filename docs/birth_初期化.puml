@@ -1,6 +1,9 @@
 @startuml
-title 初期化処理フロー
+title birth初期化の処理フロー
 start
+
+:DB接続;
+:DBマイグレーション実行;
 
 ' 初期更新処理
 
