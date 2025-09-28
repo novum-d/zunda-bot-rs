@@ -56,7 +56,7 @@ impl BirthResetUsecase {
                 .label("解除")
                 .style(serenity::all::ButtonStyle::Danger);
             let action_row = CreateActionRow::Buttons(vec![reset_button]);
-            let msg = poise_ctx
+            let reply_handle = poise_ctx
                 .send(
                     CreateReply::default()
                         .content("誕生日の通知登録を解除してもいいのだ👀？")
@@ -64,7 +64,7 @@ impl BirthResetUsecase {
                         .ephemeral(true),
                 )
                 .await?;
-            let msg = msg.message().await?;
+            let msg = reply_handle.message().await?;
 
             let msg_interaction = msg
                 .await_component_interaction(&poise_ctx.serenity_context().shard)
@@ -79,7 +79,7 @@ impl BirthResetUsecase {
                         .await?;
 
                     // 誕生日解除の確認メッセージと「解除」ボタンを削除
-                    msg.delete(poise_ctx).await?;
+                    reply_handle.delete(poise_ctx).await.unwrap_or_default(); // メッセージが削除できない場合に処理をしない
 
                     // 「誕生日通知が解除されたこと」をメッセージで通知
                     let response = CreateInteractionResponse::Message(
@@ -95,7 +95,7 @@ impl BirthResetUsecase {
                     interaction
                         .create_response(poise_ctx.http(), response)
                         .await
-                        .unwrap_or_default();
+                        .unwrap_or_default(); // インタラクションに反応できない場合に処理をしない
                 }
             }
         }
