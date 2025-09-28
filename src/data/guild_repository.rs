@@ -1,4 +1,5 @@
 use crate::data::zunda_bot_database::ZundaBotDatabase;
+use crate::models::common::Context;
 use crate::models::data::GuildMember;
 use crate::models::domain::{MyGuild, MyGuildMember};
 use chrono::NaiveDate;
@@ -126,6 +127,20 @@ impl GuildRepository {
             name: partial_guild.name,
             members,
         })
+    }
+
+    pub async fn fetch_guild_id_from_command(
+        &self,
+        poise_ctx: Context<'_>,
+    ) -> anyhow::Result<GuildId> {
+        match poise_ctx.guild_id() {
+            Some(id) => Ok(id),
+            None => {
+                let err_msg = "Could not retrieve the Guild ID.";
+                tracing::error!(err_msg);
+                Err(anyhow::anyhow!(err_msg))
+            }
+        }
     }
 
     pub async fn fetch_my_guild_ids(&self) -> anyhow::Result<Vec<GuildId>> {
