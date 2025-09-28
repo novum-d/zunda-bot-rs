@@ -31,7 +31,7 @@ impl BirthResetUsecase {
         // コマンドを実行したメンバーのメンバーIDを取得
         let member_id = i64::from(poise_ctx.author().id);
 
-        // ギルドIDとメンバーIDに一致するメンバーの誕生日をguild_memberテーブルから取得;
+        // ギルドIDとメンバーIDに一致するメンバーの誕生日をguild_memberテーブルから取得
         let member_birth = self
             .guild_repo
             .get_member_birth(guild_id, member_id)
