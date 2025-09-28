@@ -1,5 +1,6 @@
 use crate::data::guild_repository::GuildRepository;
 use crate::models::common::{Context, Error};
+use crate::res::colors::{EMBED_COLOR_SUCCESS, EMBED_COLOR_WARNING};
 use poise::CreateReply;
 use serenity::all::{
     CreateActionRow, CreateButton, CreateEmbed, CreateInteractionResponse,
@@ -44,7 +45,7 @@ impl BirthResetUsecase {
                         .embed(
                             CreateEmbed::new()
                                 .title("⚠️ 誕生日が登録されていないのだ")
-                                .color(0xffd700), // 警告系の色
+                                .color(EMBED_COLOR_WARNING), // 警告系の色
                         )
                         .ephemeral(true),
                 )
@@ -87,7 +88,7 @@ impl BirthResetUsecase {
                                 CreateEmbed::new()
                                     .title("🗑️ 誕生日の通知登録を解除したのだ。")
                                     .description("登録した日付はリセットされたのだ。")
-                                    .color(0x00ff00), // 正常系の色
+                                    .color(EMBED_COLOR_SUCCESS), // 正常系の色
                             )
                             .ephemeral(true),
                     );
