@@ -59,7 +59,7 @@ impl BirthResetUsecase {
             let reply_handle = poise_ctx
                 .send(
                     CreateReply::default()
-                        .content("誕生日の通知登録を解除してもいいのだ👀？")
+                        .content("誕生日の通知登録を解除するのだ⚠️")
                         .components(vec![action_row])
                         .ephemeral(true),
                 )
