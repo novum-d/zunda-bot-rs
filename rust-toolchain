@@ -1,1 +1,4 @@
-1.87.0
+[toolchain]
+channel = "1.88.0"
+
+
