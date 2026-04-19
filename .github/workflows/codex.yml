@@ -1,0 +1,176 @@
+name: Codex Issue Automation
+
+on:
+  issues:
+    types: [ labeled ]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: read
+
+jobs:
+  codex:
+    if: github.event.label.name == 'codex'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Prepare prompt
+        run: |
+          mkdir -p .codex
+
+          cat > .codex/prompt.md << 'EOF'
+          You are implementing a GitHub issue for this repository.
+
+          Before making changes, read:
+          - AGENTS.md
+          - docs/ai/SKILLS.md
+          - docs/ai/ARCHITECTURE.md
+          - docs/ai/TESTING.md
+          - docs/ai/DECISIONS.md
+
+          Issue title:
+          ${{ github.event.issue.title }}
+
+          Issue body:
+          ${{ github.event.issue.body }}
+
+          Rules:
+          - Follow AGENTS.md
+          - Keep changes under 300 lines
+          - Do not modify forbidden files
+          - Do not add dependencies
+          - Do not change Cargo.toml or Cargo.lock
+          - Do not touch workflows, deploy, infra, or secrets
+          - Write PR title and body in Japanese
+          - Run cargo fmt, cargo clippy, cargo test
+          - Stop if approval is required
+          - Keep changes focused on the issue only
+          EOF
+
+      - name: Run Codex
+        id: codex
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt-file: .codex/prompt.md
+          sandbox: workspace-write
+          safety-strategy: drop-sudo
+
+      - name: Check forbidden paths
+        run: |
+          forbidden=(
+            ".github/workflows/"
+            "infra/"
+            "deploy/"
+            "secrets/"
+            ".env"
+            ".env.local"
+            "Cargo.toml"
+            "Cargo.lock"
+            "Dockerfile"
+            "docker-compose.yml"
+          )
+
+          changed_files=$(git diff --name-only HEAD~1 HEAD)
+
+          for file in $changed_files; do
+            for path in "${forbidden[@]}"; do
+              if [[ "$file" == *"$path"* ]]; then
+                echo "Forbidden file changed: $file"
+                exit 1
+              fi
+            done
+          done
+
+      - name: Check diff size
+        run: |
+          changed_files=$(git diff --name-only HEAD~1 HEAD | wc -l)
+          added_lines=$(git diff --shortstat HEAD~1 HEAD | grep -o '[0-9]* insertion' | grep -o '[0-9]*' || echo 0)
+          deleted_lines=$(git diff --shortstat HEAD~1 HEAD | grep -o '[0-9]* deletion' | grep -o '[0-9]*' || echo 0)
+
+          echo "Changed files: $changed_files"
+          echo "Added lines: $added_lines"
+          echo "Deleted lines: $deleted_lines"
+
+          if [ "$changed_files" -gt 10 ]; then
+            echo "Too many changed files"
+            exit 1
+          fi
+
+          if [ "$added_lines" -gt 300 ]; then
+            echo "Too many added lines"
+            exit 1
+          fi
+
+          if [ "$deleted_lines" -gt 150 ]; then
+            echo "Too many deleted lines"
+            exit 1
+          fi
+
+      - name: Check dangerous commands
+        run: |
+          forbidden_commands=(
+            "rm -rf"
+            "sudo"
+            "curl | sh"
+            "wget | sh"
+            "chmod 777"
+            "mkfs"
+            "dd if="
+            "shutdown"
+            "reboot"
+            "systemctl"
+            "docker system prune"
+            "git push --force"
+            "git reset --hard"
+            "nohup"
+            "tmux"
+            "screen"
+            "disown"
+          )
+
+          for command in "${forbidden_commands[@]}"; do
+            if grep -R "$command" .; then
+              echo "Forbidden command detected: $command"
+              exit 1
+            fi
+          done
+
+      - name: Run checks
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo test
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "Issue #${{ github.event.issue.number }} の対応"
+          title: "Issue #${{ github.event.issue.number }} の対応"
+          body: |
+            ## 概要
+            - Issue #${{ github.event.issue.number }} の対応
+
+            ## 変更内容
+            - Codex により実装
+
+            ## テスト結果
+            - cargo fmt --check
+            - cargo clippy --all-targets --all-features -- -D warnings
+            - cargo test
+          draft: true
+          branch: codex/issue-${{ github.event.issue.number }}
