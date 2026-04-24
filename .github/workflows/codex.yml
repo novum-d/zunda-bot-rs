@@ -52,13 +52,12 @@ jobs:
 
           Rules:
           - Follow AGENTS.md
+          - If the issue explicitly allows scope overrides, follow the issue scope
           - Keep changes under 300 lines
           - Do not modify forbidden files
-          - Do not add dependencies
-          - Do not change Cargo.toml or Cargo.lock
           - Do not touch workflows, deploy, infra, or secrets
           - Write PR title and body in Japanese
-          - Run cargo fmt, cargo clippy, cargo test
+          - Run cargo fmt --check, cargo clippy --all-targets --all-features -- -D warnings, cargo test
           - Stop if approval is required
           - Keep changes focused on the issue only
           EOF
@@ -91,10 +90,6 @@ jobs:
             "secrets/"
             ".env"
             ".env.local"
-            "Cargo.toml"
-            "Cargo.lock"
-            "Dockerfile"
-            "docker-compose.yml"
           )
 
           echo "${{ steps.changes.outputs.files }}" | while read file; do
@@ -170,8 +165,8 @@ jobs:
           rustup component add rustfmt
           rustup component add clippy
 
-      - name: Format
-        run: cargo fmt
+      - name: Format check
+        run: cargo fmt --check
 
       - name: Check meaningful changes
         run: |
@@ -183,16 +178,15 @@ jobs:
           fi
 
       - name: Run checks
-        continue-on-error: true
         run: |
-          cargo clippy --fix --allow-dirty --allow-staged --all-targets --all-features
+          cargo clippy --all-targets --all-features -- -D warnings
           cargo test
 
       # 差分がない場合はPRを作らない
       - name: Check if changes exist
         id: diffcheck
         run: |
-          if git diff -- . ':(exclude).codex' --quiet; then
+          if git diff --quiet -- . ':(exclude).codex'; then
             echo "no_changes=true" >> $GITHUB_OUTPUT
           else
             echo "no_changes=false" >> $GITHUB_OUTPUT
