@@ -62,7 +62,7 @@ jobs:
 
       - name: Run Codex
         id: codex
-        uses: openai/codex-action@v1
+        uses: openai/codex-action@v1.6
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           prompt-file: .codex/prompt.md
@@ -156,7 +156,7 @@ jobs:
           cargo test
 
       - name: Create Pull Request
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8.1.1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "Issue #${{ github.event.issue.number }} の対応"
