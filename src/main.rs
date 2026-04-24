@@ -1,9 +1,9 @@
 mod commands;
 mod data;
 mod models;
+mod res;
 mod usecase;
 mod worker;
-mod res;
 
 use crate::commands::birth::birth;
 use crate::models::common::Data;
@@ -18,22 +18,30 @@ use commands::hello::hello;
 use poise::serenity_prelude as serenity;
 use serenity::model::gateway::GatewayIntents;
 use serenity::Client;
-use shuttle_runtime::SecretStore;
 use sqlx::PgPool;
+use std::env;
 use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
+use tokio::net::TcpListener;
 
-#[shuttle_runtime::main]
-async fn main(
-    #[shuttle_runtime::Secrets] secrets: SecretStore,
-    #[shuttle_shared_db::Postgres()] pool: PgPool, // local_uriを指定するとエラーになるので記述しない
-) -> shuttle_serenity::ShuttleSerenity {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    tokio::spawn(async {
+        if let Err(e) = run_healthcheck_server().await {
+            tracing::error!("Healthcheck server stopped: {:?}", e);
+        }
+    });
+
+    let database_url = env::var("DATABASE_URL").context("'DATABASE_URL' was not found")?;
+    let pool = PgPool::connect(&database_url)
+        .await
+        .context("Failed to connect to PostgreSQL")?;
+
     if let Err(e) = sqlx::migrate!("db/migrations").run(&pool).await {
         tracing::error!("Failed to run migrations: {:?}", e);
     }
 
-    let token = secrets
-        .get("DISCORD_TOKEN")
-        .context("'DISCORD_TOKEN' was not found")?;
+    let token = env::var("DISCORD_TOKEN").context("'DISCORD_TOKEN' was not found")?;
 
     let intents = GatewayIntents::GUILD_MEMBERS // ギルドメンバー情報取得権限
         | GatewayIntents::GUILD_MESSAGES // ギルド内のメッセージイベント受信権限
@@ -49,8 +57,8 @@ async fn main(
             ],
             ..Default::default()
         })
-        .setup(|ctx, _ready, framework| {
-            let pool = Arc::new(pool);
+        .setup(move |ctx, _ready, framework| {
+            let pool = Arc::new(pool.clone());
             Box::pin(async move {
                 let birth_list_usecase = BirthListUsecase::new(pool.clone(), ctx.http.clone())?;
                 let birth_signup_usecase = BirthSignupUsecase::new(pool.clone(), ctx.http.clone())?;
@@ -74,10 +82,40 @@ async fn main(
         })
         .build();
 
-    let client = Client::builder(&token, intents)
+    let mut client = Client::builder(&token, intents)
         .framework(framework)
-        .await
-        .map_err(shuttle_runtime::CustomError::new)?;
+        .await?;
 
-    Ok(client.into())
+    client.start().await?;
+
+    Ok(())
+}
+
+async fn run_healthcheck_server() -> anyhow::Result<()> {
+    let port = env::var("PORT").unwrap_or_else(|_| "8080".to_string());
+    let listener = TcpListener::bind(format!("0.0.0.0:{port}")).await?;
+
+    loop {
+        let (mut stream, _) = listener.accept().await?;
+        tokio::spawn(async move {
+            let _ = stream.write_all(healthcheck_response()).await;
+        });
+    }
+}
+
+fn healthcheck_response() -> &'static [u8] {
+    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::healthcheck_response;
+
+    #[test]
+    fn healthcheck_response_returns_ok() {
+        let response = healthcheck_response();
+
+        assert!(response.starts_with(b"HTTP/1.1 200 OK"));
+        assert!(response.ends_with(b"\r\n\r\nOK"));
+    }
 }

@@ -37,7 +37,7 @@ impl BirthResetUsecase {
             .get_member_birth(guild_id, member_id)
             .await?;
 
-        if let None = member_birth {
+        if member_birth.is_none() {
             // 「誕生日が登録されていないこと」をメッセージで通知
             poise_ctx
                 .send(
@@ -79,7 +79,9 @@ impl BirthResetUsecase {
                         .await?;
 
                     // 誕生日解除の確認メッセージと「解除」ボタンを削除
-                    reply_handle.delete(poise_ctx).await
+                    reply_handle
+                        .delete(poise_ctx)
+                        .await
                         .unwrap_or_else(|e| tracing::warn!("Failed to delete message: {}", e));
 
                     // 「誕生日通知が解除されたこと」をメッセージで通知
@@ -96,7 +98,9 @@ impl BirthResetUsecase {
                     interaction
                         .create_response(poise_ctx.http(), response)
                         .await
-                        .unwrap_or_else(|e| tracing::warn!("Failed to respond to interaction: {}", e));
+                        .unwrap_or_else(|e| {
+                            tracing::warn!("Failed to respond to interaction: {}", e)
+                        });
                 }
             }
         }

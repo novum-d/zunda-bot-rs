@@ -8,7 +8,7 @@
 Rust製のずんだもんDiscord Bot.
 
 ## セットアップ
-Rustのホスティングサービス`Shuttle`にDiscord Botサービスをデプロイする
+Discord Botサービスをローカル、Docker、または Google Cloud Run で実行する
 
 > [!NOTE]  
 > セットアップ前に以下でリポジトリをダウンロードしておいてください
@@ -46,49 +46,49 @@ Botをサーバーに追加する際に毎回認証を求められるので、`R
    
    すると、ボットを追加するサーバーを選択する画面が開くので、好きなサーバーを選び、ボットを追加
    
-### 2. デプロイ先のShuttleの設定
-2.1. Rustのホスティングサービス[Shuttle](https://console.shuttle.dev/)にログイン
+### 2. 環境変数の設定
+2.1. `1.1.`で作成したトークンと PostgreSQL の接続先を環境変数に設定
+   ```shell
+   export DISCORD_TOKEN="{{Your token}}"
+   export DATABASE_URL="postgres://{{user}}:{{password}}@{{host}}:5432/{{database}}"
+   ```
+
+2.2. SQLx のオフラインメタデータを使ってビルドする場合は、以下も設定
+   ```shell
+   export SQLX_OFFLINE=true
+   ```
+
+### 3. ローカル実行
 ```shell
-shuttle login
-```
-[Shuttle CLI](https://docs.shuttle.dev/guides/cli)がない場合は、以下でインストール
-```shell
-cd zunda-bot-rs
-cargo install cargo-shuttle
+cargo run
 ```
 
-2.2 デプロイ先のプロジェクト(`<project-name>`)を作成
+起動時に `db/migrations` のマイグレーションを実行します。
+
+### 4. Docker 実行
 ```shell
-shuttle project create --name <project-name> 
+docker build -t zunda-bot-rs .
+docker run --env DISCORD_TOKEN --env DATABASE_URL -p 8080:8080 zunda-bot-rs
 ```
- 
-### 3. プロジェクトの設定
-3.1 既存のプロジェクトと`2.2`で作成したデプロイ先のプロジェクトをリンク
-   ```shell
-   # 2.2のCLI経由でプロジェクトを作成した場合は不要
-   shuttle project link --name <project-name>
-   ```
-3.2. `1.1.`で作成したトークンを既存のプロジェクトにセット  
-   プロジェクトの直下に`Secrets.toml`を作成
-   ```shell
-   cp Secrets.toml.sample Secrets.toml
-   ```
-   コピーして作成した`Secrets.toml`にトークンを設定
-   ```toml
-   DISCORD_TOKEN="{{Your token}}"
-   ```
-   
-### 4. デプロイ
-4.1. 作成したBotサービスをデプロイ
-   ```shell
-   shuttle deploy
-   ```
+
+### 5. Cloud Run へのデプロイ
+Artifact Registry にイメージを push して Cloud Run にデプロイします。
+
+```shell
+gcloud builds submit --tag {{REGION}}-docker.pkg.dev/{{PROJECT_ID}}/{{REPOSITORY}}/zunda-bot-rs
+gcloud run deploy zunda-bot-rs \
+  --image {{REGION}}-docker.pkg.dev/{{PROJECT_ID}}/{{REPOSITORY}}/zunda-bot-rs \
+  --region {{REGION}} \
+  --set-secrets DISCORD_TOKEN={{DISCORD_TOKEN_SECRET}}:latest,DATABASE_URL={{DATABASE_URL_SECRET}}:latest
+```
+
+Cloud Run の起動確認用に、コンテナは `PORT` 環境変数のポートで HTTP 200 を返します。
 
 ## デバッグ
 
 ローカルで動作をテストしたい場合は、以下を実行
    ```shell
-   shuttle run
+   SQLX_OFFLINE=true cargo run
    ```
 
 ## 実行環境
@@ -102,7 +102,7 @@ shuttle project create --name <project-name>
 
 * [GitHub Actions](https://github.com/actions-rs/cargo)
  
->CI/CDは`共有の開発アカウント(Discord, Shuttle)`を使用した環境でのみ実行されるので、利用する際は @novum-d までご連絡ください
+>CI/CDは共有の開発アカウントを使用した環境でのみ実行されるので、利用する際は @novum-d までご連絡ください
 
 
 [ci]: https://github.com/novum-d/zunda-bot-rs/actions

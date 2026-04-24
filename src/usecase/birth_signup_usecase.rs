@@ -34,7 +34,7 @@ impl BirthSignupUsecase {
             .get_member_birth(guild_id, member_id)
             .await?;
 
-        if let None = member_birth {
+        if member_birth.is_none() {
             // メンバー情報に誕生日が存在しない
             if let Context::Application(app_ctx) = poise_ctx {
                 let data = BirthSignupModal::execute(app_ctx).await?;
@@ -44,7 +44,7 @@ impl BirthSignupUsecase {
                         "%Y/%m/%d",
                     );
 
-                    if let Err(_) = birth {
+                    if birth.is_err() {
                         // 誕生日の入力フォーマットが無効
                         // 「誕生日の入力フォーマットが無効であること」をメッセージで通知
                         poise_ctx

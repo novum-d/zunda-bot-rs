@@ -108,7 +108,7 @@ impl GuildRepository {
     }
 
     pub async fn fetch_my_guild(&self, guild_id: &GuildId) -> anyhow::Result<MyGuild> {
-        let partial_guild = self.http.get_guild(guild_id.clone()).await?;
+        let partial_guild = self.http.get_guild(*guild_id).await?;
         let members = partial_guild
             .members(&*self.http, None, None)
             .await?
