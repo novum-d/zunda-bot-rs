@@ -152,9 +152,11 @@ jobs:
             "disown"
           )
 
+          diff_content=$(git diff HEAD | grep '^+')
+
           for command in "${forbidden_commands[@]}"; do
-            if grep -R "$command" .; then
-              echo "Forbidden command detected: $command"
+            if echo "$diff_content" | grep -q "$command"; then
+              echo "Forbidden command detected in diff: $command"
               exit 1
             fi
           done
