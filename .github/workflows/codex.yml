@@ -13,7 +13,10 @@ jobs:
   codex:
     if: github.event.label.name == 'codex'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 15    
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    
 
     steps:
       - name: Checkout
