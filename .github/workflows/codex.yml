@@ -2,7 +2,7 @@ name: Codex Issue Automation
 
 on:
   issues:
-    types: [ labeled ]
+    types: [labeled]
 
 permissions:
   contents: write
@@ -152,13 +152,16 @@ jobs:
             "disown"
           )
 
-          diff_content=$(git diff HEAD | grep '^+')
+          files=$(git diff --name-only)
 
-          for command in "${forbidden_commands[@]}"; do
-            if echo "$diff_content" | grep -q "$command"; then
-              echo "Forbidden command detected in diff: $command"
-              exit 1
-            fi
+          for file in $files; do
+            for command in "${forbidden_commands[@]}"; do
+              if grep -q "$command" "$file"; then
+                echo "Forbidden command detected in $file: $command"
+                grep "$command" "$file"
+                exit 1
+              fi
+            done
           done
 
       - name: Run checks
