@@ -3,6 +3,7 @@ name: Codex Issue Automation
 on:
   issues:
     types: [labeled]
+  pull_request:
 
 permissions:
   contents: write
@@ -11,7 +12,7 @@ permissions:
 
 jobs:
   codex:
-    if: github.event.label.name == 'codex'
+    if: github.event_name == 'issues' && github.event.label.name == 'codex'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -173,6 +174,7 @@ jobs:
         run: cargo fmt
 
       - name: Run checks
+        continue-on-error: true
         run: |
           cargo clippy --all-targets --all-features -- -D warnings
           cargo test
@@ -207,3 +209,24 @@ jobs:
             - cargo test
           draft: true
           branch: codex/issue-${{ github.event.issue.number }}
+
+  quality-gate:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install components
+        run: rustup component add rustfmt clippy
+
+      - name: Format check
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Test
+        run: cargo test
