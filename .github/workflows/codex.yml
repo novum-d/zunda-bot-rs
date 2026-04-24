@@ -71,7 +71,7 @@ jobs:
           sandbox: workspace-write
           safety-strategy: drop-sudo
 
-      # ★ 修正①：差分の取り方を修正（誤検知防止）
+      # 差分の取り方を修正（誤検知防止）
       - name: Get changed files
         id: changes
         run: |
@@ -80,7 +80,7 @@ jobs:
           echo "$changed_files" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      # ★ 修正②：禁止ファイルは失敗させず巻き戻す
+      # 禁止ファイルは失敗させず巻き戻す
       - name: Check forbidden paths
         run: |
           forbidden=(
@@ -164,13 +164,18 @@ jobs:
             done
           done
 
+      - name: Install Rust components
+        run: |
+          rustup component add rustfmt
+          rustup component add clippy
+
       - name: Run checks
         run: |
           cargo fmt --check
           cargo clippy --all-targets --all-features -- -D warnings
           cargo test
 
-      # ★ 修正③：差分がない場合はPRを作らない
+      # 差分がない場合はPRを作らない
       - name: Check if changes exist
         id: diffcheck
         run: |
