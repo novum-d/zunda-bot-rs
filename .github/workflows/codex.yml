@@ -173,17 +173,26 @@ jobs:
       - name: Format
         run: cargo fmt
 
+      - name: Check meaningful changes
+        run: |
+          if git diff --name-only | grep -v ".codex" | grep -q .; then
+            echo "Valid changes"
+          else
+            echo "No meaningful changes"
+            exit 1
+          fi
+
       - name: Run checks
         continue-on-error: true
         run: |
-          cargo clippy --all-targets --all-features -- -D warnings
+          cargo clippy --fix --allow-dirty --allow-staged --all-targets --all-features
           cargo test
 
       # 差分がない場合はPRを作らない
       - name: Check if changes exist
         id: diffcheck
         run: |
-          if git diff --quiet; then
+          if git diff -- . ':(exclude).codex' --quiet; then
             echo "no_changes=true" >> $GITHUB_OUTPUT
           else
             echo "no_changes=false" >> $GITHUB_OUTPUT
