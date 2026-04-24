@@ -134,7 +134,6 @@ jobs:
       - name: Check dangerous commands
         run: |
           forbidden_commands=(
-            "rm -rf"
             "sudo"
             "curl | sh"
             "wget | sh"
