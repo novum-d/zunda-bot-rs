@@ -14,24 +14,10 @@ jobs:
     if: github.event.label.name == 'codex'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-
-    strategy:
-      fail-fast: false
-      max-parallel: 1
-      matrix:
-        attempt: [1, 2, 3]
-
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
-      - name: Show attempt
-        run: echo "Attempt ${{ matrix.attempt }}"
-
-      - name: Wait before retry
-        if: matrix.attempt > 1
-        run: sleep $(( 10 * ${{ matrix.attempt }} ))
-
       - name: Checkout
         uses: actions/checkout@v5
         with:
@@ -85,16 +71,16 @@ jobs:
           sandbox: workspace-write
           safety-strategy: drop-sudo
 
-      # 差分取得（正しい方法）
+      # ★ 修正①：差分の取り方を修正（誤検知防止）
       - name: Get changed files
         id: changes
         run: |
-          changed_files=$(git diff --name-only HEAD)
+          changed_files=$(git diff --name-only)
           echo "files<<EOF" >> $GITHUB_OUTPUT
           echo "$changed_files" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      # 禁止ファイルは巻き戻し
+      # ★ 修正②：禁止ファイルは失敗させず巻き戻す
       - name: Check forbidden paths
         run: |
           forbidden=(
@@ -110,7 +96,7 @@ jobs:
             "docker-compose.yml"
           )
 
-          while read file; do
+          echo "${{ steps.changes.outputs.files }}" | while read file; do
             for path in "${forbidden[@]}"; do
               if [[ "$file" == *"$path"* ]]; then
                 echo "::warning::Forbidden file changed: $file"
@@ -118,13 +104,13 @@ jobs:
                 git checkout -- "$file"
               fi
             done
-          done <<< "${{ steps.changes.outputs.files }}"
+          done
 
       - name: Check diff size
         run: |
-          changed_files=$(git diff --name-only HEAD | wc -l)
-          added_lines=$(git diff --shortstat HEAD | grep -o '[0-9]* insertion' | grep -o '[0-9]*' || echo 0)
-          deleted_lines=$(git diff --shortstat HEAD | grep -o '[0-9]* deletion' | grep -o '[0-9]*' || echo 0)
+          changed_files=$(git diff --name-only | wc -l)
+          added_lines=$(git diff --shortstat | grep -o '[0-9]* insertion' | grep -o '[0-9]*' || echo 0)
+          deleted_lines=$(git diff --shortstat | grep -o '[0-9]* deletion' | grep -o '[0-9]*' || echo 0)
 
           echo "Changed files: $changed_files"
           echo "Added lines: $added_lines"
@@ -145,7 +131,6 @@ jobs:
             exit 1
           fi
 
-      # ★ 修正済み：差分だけチェック（誤爆防止）
       - name: Check dangerous commands
         run: |
           forbidden_commands=(
@@ -168,11 +153,9 @@ jobs:
             "disown"
           )
 
-          diff_content=$(git diff HEAD | grep '^+')
-
           for command in "${forbidden_commands[@]}"; do
-            if echo "$diff_content" | grep -q "$command"; then
-              echo "Forbidden command detected in diff: $command"
+            if grep -R "$command" .; then
+              echo "Forbidden command detected: $command"
               exit 1
             fi
           done
@@ -183,11 +166,11 @@ jobs:
           cargo clippy --all-targets --all-features -- -D warnings
           cargo test
 
-      # 差分がなければPR作らない
+      # ★ 修正③：差分がない場合はPRを作らない
       - name: Check if changes exist
         id: diffcheck
         run: |
-          if git diff --quiet HEAD; then
+          if git diff --quiet; then
             echo "no_changes=true" >> $GITHUB_OUTPUT
           else
             echo "no_changes=false" >> $GITHUB_OUTPUT
