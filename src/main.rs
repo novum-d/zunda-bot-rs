@@ -1,9 +1,9 @@
 mod commands;
 mod data;
 mod models;
+mod res;
 mod usecase;
 mod worker;
-mod res;
 
 use crate::commands::birth::birth;
 use crate::models::common::Data;
