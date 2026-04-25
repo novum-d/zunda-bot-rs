@@ -3,8 +3,7 @@ use crate::models::common::{Context, Error};
 use crate::res::colors::{EMBED_COLOR_SUCCESS, EMBED_COLOR_WARNING};
 use poise::CreateReply;
 use serenity::all::{
-    CreateActionRow, CreateButton, CreateEmbed, CreateInteractionResponse,
-    CreateInteractionResponseMessage, Http,
+    CreateActionRow, CreateButton, CreateEmbed, CreateInteractionResponse, Http,
 };
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -27,9 +26,19 @@ impl BirthResetUsecase {
             .fetch_guild_id_from_command(poise_ctx)
             .await?;
         let guild_id = i64::from(guild_id);
+        let guild_name = poise_ctx
+            .guild()
+            .map(|guild| guild.name.clone())
+            .unwrap_or_else(|| format!("guild-{guild_id}"));
 
         // コマンドを実行したメンバーのメンバーIDを取得
         let member_id = i64::from(poise_ctx.author().id);
+
+        // 初回参加メンバーでも参照できるよう、対象レコードを事前に作成しておく
+        self.guild_repo
+            .add_guild(guild_id, Some(guild_name.as_str()))
+            .await?;
+        self.guild_repo.add_member(guild_id, member_id, None).await?;
 
         // ギルドIDとメンバーIDに一致するメンバーの誕生日をguild_memberテーブルから取得
         let member_birth = self
@@ -72,6 +81,13 @@ impl BirthResetUsecase {
                 .await;
             if let Some(interaction) = msg_interaction {
                 if interaction.data.custom_id == "reset" {
+                    interaction
+                        .create_response(poise_ctx.http(), CreateInteractionResponse::Acknowledge)
+                        .await
+                        .unwrap_or_else(|e| {
+                            tracing::warn!("Failed to acknowledge interaction: {}", e)
+                        });
+
                     // ユーザーが「解除」ボタンを押下
                     // guild_memberテーブルの誕生日と最終通知日をNULLに更新
                     self.guild_repo
@@ -85,22 +101,23 @@ impl BirthResetUsecase {
                         .unwrap_or_else(|e| tracing::warn!("Failed to delete message: {}", e));
 
                     // 「誕生日通知が解除されたこと」をメッセージで通知
-                    let response = CreateInteractionResponse::Message(
-                        CreateInteractionResponseMessage::new()
-                            .embed(
-                                CreateEmbed::new()
-                                    .title("🗑️ 誕生日の通知登録を解除したのだ。")
-                                    .description("登録した日付はリセットされたのだ。")
-                                    .color(EMBED_COLOR_SUCCESS), // 正常系の色
-                            )
-                            .ephemeral(true),
-                    );
-                    interaction
-                        .create_response(poise_ctx.http(), response)
+                    poise_ctx
+                        .send(
+                            CreateReply::default()
+                                .embed(
+                                    CreateEmbed::new()
+                                        .title("🗑️ 誕生日の通知登録を解除したのだ。")
+                                        .description("登録した日付はリセットされたのだ。")
+                                        .color(EMBED_COLOR_SUCCESS), // 正常系の色
+                                )
+                                .ephemeral(true),
+                        )
                         .await
-                        .unwrap_or_else(|e| {
-                            tracing::warn!("Failed to respond to interaction: {}", e)
-                        });
+                        .map_err(|e| {
+                            tracing::warn!("Failed to send reset response: {}", e);
+                            e
+                        })
+                        .ok();
                 }
             }
         }
