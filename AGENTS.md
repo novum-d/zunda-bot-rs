@@ -26,6 +26,7 @@ Before making any changes, Codex must read the following files:
 * docs/ai/ARCHITECTURE.md
 * docs/ai/TESTING.md
 * docs/ai/DECISIONS.md
+* docs/about_git.md
 
 <!--
 変更前に上記ファイルを必ず読むこと。
@@ -218,8 +219,12 @@ All PRs created by Codex must:
 
 * Be Draft PRs
 * Be written in Japanese
+* Use a clear PR title that states objective + key change (avoid vague titles like `Issue #xx の対応`)
 * Reference the related issue
 * Include a short summary
+* Include `作業内容` section
+* Include `作業意図` section
+* Include `手動で次にするべき作業` section
 * Include changed files
 * Include test results
 * Include known limitations
@@ -237,6 +242,18 @@ Example PR format:
 
 - Discord API エラー時のログ出力を追加
 - コマンド実行時のエラーハンドリングを改善
+
+## 作業内容
+
+- 何を変更したかを箇条書きで記載
+
+## 作業意図
+
+- なぜその変更が必要かを簡潔に記載
+
+## 手動で次にするべき作業
+
+- レビュアー/運用担当が次に行う確認手順を記載
 
 ## 変更ファイル
 
@@ -265,6 +282,8 @@ Codex must never:
 * Convert Draft PRs to Ready for Review
 * Use force push
 * Rebase shared branches
+
+Codex must follow branch naming and git operation rules documented in `docs/about_git.md`.
 
 <!--
 main への直接 push・自動 merge・force push は禁止。
@@ -300,6 +319,13 @@ Codex should:
 6. Run required checks
 7. Open a Draft PR
 8. Let a human review and merge
+
+## Documentation Sync Rule
+
+When changes affect behavior, operations, or architecture, Codex must update documentation as needed in the same task:
+
+* `README.md` (setup/deployment/operations)
+* `docs/uml/**` (flow and ER diagrams)
 
 <!--
 Issue と docs/ai 配下のファイルを読み、既存実装を参考にしながら、最小限の変更で Draft PR を作成すること。
