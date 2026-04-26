@@ -21,10 +21,7 @@ impl ZundaBotDatabase {
         "#
         )
         .fetch_all(&*self.pool)
-        .await?
-        .into_iter()
-        .filter_map(|guild_id: i64| Some(guild_id))
-        .collect::<Vec<i64>>();
+        .await?;
         Ok(guild_ids)
     }
 

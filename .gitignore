@@ -1,6 +1,5 @@
-# --- shuttle --- #
-.shuttle*
-Secrets*.toml
+# --- my config --- #
+.env
 
 # --- ignore.io --- #
 # Created by https://www.toptal.com/developers/gitignore/api/rust,intellij,macos,linux,windows

@@ -7,7 +7,7 @@ use std::time::Duration;
 pub struct AnnualBirthdayNotifier;
 
 impl AnnualBirthdayNotifier {
-    pub async fn new(birth_notify_usecase: BirthNotifyUsecase) -> anyhow::Result<(), Error> {
+    pub async fn run(birth_notify_usecase: BirthNotifyUsecase) -> anyhow::Result<(), Error> {
         // 初回の誕生日チェックまでの時間を調節
         let now = Tokyo.from_utc_datetime(&Local::now().naive_utc());
         let noon = NaiveTime::from_hms_opt(12, 0, 0).expect("Invalid time.");

@@ -59,8 +59,8 @@ impl BirthNotifyUsecase {
             };
 
             // 誕生日のメッセージをメンバーのメンションをつけて、"一般"または"general"のチャンネルに送信
-            let mention = format!("<@{}>", member_id);
-            let main_content = format!("@here\n今日は「🎂 {} さんのお誕生日 🎂」！\n\n今年も自分らしい１年を過ごせるとよきなのだ！！！", mention);
+            let mention = format!("<@{member_id}>");
+            let main_content = format!("@here\n今日は「🎂 {mention} さんのお誕生日 🎂」！\n\n今年も自分らしい１年を過ごせるとよきなのだ！！！");
             let member = guild_id.member(http, u64::try_from(member_id)?).await?;
             let msg = channel_id
                 .send_message(
@@ -79,10 +79,8 @@ impl BirthNotifyUsecase {
                 .await?;
 
             // お祝いメッセージの一例を誕生日のメッセージのリプライとして送信
-            let sub_content = format!(
-                "{} さん\nお誕生日おめでとうなのだ🎉\nいつもありがとなのだ！",
-                mention
-            );
+            let sub_content =
+                format!("{mention} さん\nお誕生日おめでとうなのだ🎉\nいつもありがとなのだ！");
             channel_id
                 .send_message(
                     http,

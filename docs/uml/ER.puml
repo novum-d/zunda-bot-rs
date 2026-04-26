@@ -16,7 +16,8 @@ entity "guild_member" as member {
   +member_id : BIGINT <<PK>>
   +guild_id  : BIGINT <<PK,FK>>
   --
-  birth      : TIMESTAMP
+  birth         : DATE
+  last_notified : DATE
 }
 note right of member::member_id
 Discordユーザーを識別するID
@@ -28,6 +29,10 @@ end note
 
 note right of member::birth
 ギルドに所属するメンバーの誕生日
+end note
+
+note right of member::last_notified
+今年度の誕生日通知済み日
 end note
 
 guild ||--o{ member : "ギルドに\n所属するメンバー"

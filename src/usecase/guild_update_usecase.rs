@@ -98,7 +98,7 @@ impl GuildUpdateUsecase {
             members: _,
         } in &latest_my_guilds
         {
-            let latest_guild_id = id.clone();
+            let latest_guild_id = *id;
             let latest_guild_members_set_by_guild: HashSet<&MyGuildMember> = latest_my_guilds
                 .iter()
                 .filter(|my_guild| my_guild.id == latest_guild_id)
@@ -123,7 +123,7 @@ impl GuildUpdateUsecase {
                 let member = latest_guild_members_set_by_guild
                     .iter()
                     .find(|member| member.member_id == id);
-                if let Some(_) = member {
+                if member.is_some() {
                     // メンバー情報を更新する内容があれば、ここに処理を置く
                 }
             }

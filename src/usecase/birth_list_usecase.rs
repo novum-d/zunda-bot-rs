@@ -67,7 +67,7 @@ impl BirthListUsecase {
             let birth_list = join_all(birth_features)
                 .await
                 .into_iter()
-                .filter_map(|x| x)
+                .flatten()
                 .collect::<Vec<_>>();
             CreateReply::default()
                 .embed(
