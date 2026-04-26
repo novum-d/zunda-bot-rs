@@ -113,12 +113,10 @@ impl GuildRepository {
             .members(&*self.http, None, None)
             .await?
             .into_iter()
-            .filter_map(|member| {
-                Some(MyGuildMember {
-                    guild_id: i64::from(member.guild_id),
-                    member_id: i64::from(member.user.id),
-                    birth: None,
-                })
+            .map(|member| MyGuildMember {
+                guild_id: i64::from(member.guild_id),
+                member_id: i64::from(member.user.id),
+                birth: None,
             })
             .collect::<Vec<MyGuildMember>>();
 

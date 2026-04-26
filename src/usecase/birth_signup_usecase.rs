@@ -29,7 +29,7 @@ impl BirthSignupUsecase {
             return Ok(());
         };
 
-        let birth = NaiveDate::parse_from_str(&format!("1970/{}", input_birth), "%Y/%m/%d");
+        let birth = NaiveDate::parse_from_str(&format!("1970/{input_birth}"), "%Y/%m/%d");
         if birth.is_err() {
             // 誕生日の入力フォーマットが無効
             poise_ctx
@@ -64,7 +64,9 @@ impl BirthSignupUsecase {
         self.guild_repo
             .add_guild(guild_id, Some(guild_name.as_str()))
             .await?;
-        self.guild_repo.add_member(guild_id, member_id, None).await?;
+        self.guild_repo
+            .add_member(guild_id, member_id, None)
+            .await?;
 
         // ギルドIDとメンバーIDに一致するメンバー情報をguild_memberテーブルから取得
         let member_birth = self

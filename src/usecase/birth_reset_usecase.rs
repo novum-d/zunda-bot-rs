@@ -2,9 +2,7 @@ use crate::data::guild_repository::GuildRepository;
 use crate::models::common::{Context, Error};
 use crate::res::colors::{EMBED_COLOR_SUCCESS, EMBED_COLOR_WARNING};
 use poise::CreateReply;
-use serenity::all::{
-    CreateActionRow, CreateButton, CreateEmbed, CreateInteractionResponse, Http,
-};
+use serenity::all::{CreateActionRow, CreateButton, CreateEmbed, CreateInteractionResponse, Http};
 use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Duration;
@@ -38,7 +36,9 @@ impl BirthResetUsecase {
         self.guild_repo
             .add_guild(guild_id, Some(guild_name.as_str()))
             .await?;
-        self.guild_repo.add_member(guild_id, member_id, None).await?;
+        self.guild_repo
+            .add_member(guild_id, member_id, None)
+            .await?;
 
         // ギルドIDとメンバーIDに一致するメンバーの誕生日をguild_memberテーブルから取得
         let member_birth = self

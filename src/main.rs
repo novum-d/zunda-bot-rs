@@ -66,7 +66,7 @@ async fn main() -> anyhow::Result<()> {
                 let guild_update_usecase = GuildUpdateUsecase::new(pool.clone(), ctx.http.clone())?;
                 guild_update_usecase.invoke().await?;
 
-                tokio::spawn(AnnualBirthdayNotifier::new(birth_notify_usecase));
+                tokio::spawn(AnnualBirthdayNotifier::run(birth_notify_usecase));
 
                 poise::builtins::register_globally(ctx, &framework.options().commands).await?;
 
@@ -82,7 +82,9 @@ async fn main() -> anyhow::Result<()> {
         .build();
 
     let bot = async {
-        let mut client = Client::builder(&token, intents).framework(framework).await?;
+        let mut client = Client::builder(&token, intents)
+            .framework(framework)
+            .await?;
         client.start().await?;
         Ok::<(), anyhow::Error>(())
     };

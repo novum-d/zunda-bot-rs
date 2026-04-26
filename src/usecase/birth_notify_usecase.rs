@@ -79,9 +79,8 @@ impl BirthNotifyUsecase {
                 .await?;
 
             // お祝いメッセージの一例を誕生日のメッセージのリプライとして送信
-            let sub_content = format!(
-                "{mention} さん\nお誕生日おめでとうなのだ🎉\nいつもありがとなのだ！"
-            );
+            let sub_content =
+                format!("{mention} さん\nお誕生日おめでとうなのだ🎉\nいつもありがとなのだ！");
             channel_id
                 .send_message(
                     http,
