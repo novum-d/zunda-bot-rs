@@ -122,12 +122,17 @@ pub async fn remind_resume(ctx: Context<'_>) -> anyhow::Result<(), Error> {
     Ok(())
 }
 
-async fn report_command_error(ctx: Context<'_>, action: &str, e: &Error) {
+async fn report_command_error<E>(ctx: Context<'_>, action: &str, e: &E)
+where
+    E: std::fmt::Display + ?Sized,
+{
     tracing::error!(action, "birth command failed: {}", e);
     if let Err(send_err) = ctx
         .send(
             CreateReply::default()
-                .content("コマンドの実行中にエラーが発生したのだ。時間をおいて再実行してほしいのだ。")
+                .content(
+                    "コマンドの実行中にエラーが発生したのだ。時間をおいて再実行してほしいのだ。",
+                )
                 .ephemeral(true),
         )
         .await

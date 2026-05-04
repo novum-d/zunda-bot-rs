@@ -64,7 +64,6 @@ Botをサーバーに追加する際に毎回認証を求められるので、`R
    ```dotenv
    DISCORD_TOKEN="{{Your token}}"
    DATABASE_URL="postgres://{{user}}:{{password}}@{{host}}:5432/{{database}}"
-   BOT_CHANNEL_ID="{{birthday reminder channel id}}"
    ```
 
 ### 3. ローカル実行
@@ -148,7 +147,8 @@ gcloud run deploy zunda-bot-rs \
 ```
 
 Cloud Run の起動確認用に、コンテナは `PORT` 環境変数のポートで HTTP 200 を返します。
-誕生日未登録リマインドの定期スキャンは、Cloud Scheduler などから `POST /internal/reminder/scan` を呼び出します。
+誕生日未登録リマインドは、送信時に `ずんだぼっと` という名前のテキストチャンネルを探します。存在しない場合は Bot が自動作成します。
+定期スキャンは、Cloud Scheduler などから `POST /internal/reminder/scan` を呼び出します。
 
 5.8. デプロイ後のログ確認
 

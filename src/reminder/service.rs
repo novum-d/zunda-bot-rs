@@ -3,10 +3,10 @@ use crate::models::data::GuildMember;
 use anyhow::Context as _;
 use chrono::{DateTime, Duration, Utc};
 use serenity::all::{
-    ButtonStyle, ChannelId, CreateActionRow, CreateButton, CreateMessage, Http, Message,
+    ButtonStyle, ChannelId, ChannelType, CreateActionRow, CreateButton, CreateChannel,
+    CreateMessage, GuildId, Http, Message,
 };
 use sqlx::PgPool;
-use std::env;
 use std::sync::Arc;
 use tokio::time::sleep;
 
@@ -14,6 +14,7 @@ const MAX_REMIND_COUNT: i32 = 5;
 const ACTIVE_WINDOW_DAYS: i64 = 7;
 const MIN_REMIND_INTERVAL_HOURS: i64 = 24;
 const FIRST_REMIND_DELAY_DAYS: i64 = 1;
+const BOT_CHANNEL_NAME: &str = "ずんだぼっと";
 pub const STOP_BUTTON_PREFIX: &str = "birth_reminder_stop";
 
 pub type User = GuildMember;
@@ -21,22 +22,13 @@ pub type User = GuildMember;
 pub struct ReminderService {
     guild_repo: GuildRepository,
     http: Arc<Http>,
-    bot_channel_id: ChannelId,
 }
 
 impl ReminderService {
     pub fn new(pool: Arc<PgPool>, http: Arc<Http>) -> anyhow::Result<Self> {
-        let bot_channel_id = env::var("BOT_CHANNEL_ID")
-            .context("'BOT_CHANNEL_ID' was not found")?
-            .parse::<u64>()
-            .context("'BOT_CHANNEL_ID' must be a Discord channel id")?;
         let guild_repo = GuildRepository::new(pool, http.clone())?;
 
-        Ok(Self {
-            guild_repo,
-            http,
-            bot_channel_id: ChannelId::new(bot_channel_id),
-        })
+        Ok(Self { guild_repo, http })
     }
 
     pub async fn record_message_activity(&self, message: &Message) -> anyhow::Result<()> {
@@ -56,7 +48,9 @@ impl ReminderService {
         self.guild_repo
             .add_guild(guild_id, Some(&format!("guild-{guild_id}")))
             .await?;
-        self.guild_repo.add_member(guild_id, member_id, None).await?;
+        self.guild_repo
+            .add_member(guild_id, member_id, None)
+            .await?;
         self.guild_repo
             .update_last_active(guild_id, member_id, now, first_remind_at)
             .await?;
@@ -83,8 +77,9 @@ impl ReminderService {
         let stop_button = CreateButton::new(custom_id)
             .label("リマインド停止")
             .style(ButtonStyle::Danger);
+        let channel_id = self.ensure_bot_channel(user.guild_id).await?;
 
-        self.bot_channel_id
+        channel_id
             .send_message(
                 &self.http,
                 CreateMessage::new()
@@ -97,6 +92,26 @@ impl ReminderService {
             .await?;
 
         Ok(())
+    }
+
+    async fn ensure_bot_channel(&self, guild_id: i64) -> anyhow::Result<ChannelId> {
+        let guild_id = GuildId::new(u64::try_from(guild_id).context("guild id must be positive")?);
+        let channels = guild_id.channels(&self.http).await?;
+
+        if let Some(channel) = channels
+            .values()
+            .find(|channel| channel.kind == ChannelType::Text && channel.name == BOT_CHANNEL_NAME)
+        {
+            return Ok(channel.id);
+        }
+
+        let channel = guild_id
+            .create_channel(
+                &self.http,
+                CreateChannel::new(BOT_CHANNEL_NAME).kind(ChannelType::Text),
+            )
+            .await?;
+        Ok(channel.id)
     }
 
     pub async fn mark_reminder_sent(&self, user: &User, now: DateTime<Utc>) -> anyhow::Result<()> {
@@ -120,7 +135,9 @@ impl ReminderService {
         self.guild_repo
             .add_guild(guild_id, Some(&format!("guild-{guild_id}")))
             .await?;
-        self.guild_repo.add_member(guild_id, member_id, None).await?;
+        self.guild_repo
+            .add_member(guild_id, member_id, None)
+            .await?;
         self.guild_repo
             .update_reminder_opt_out(guild_id, member_id, false, Some(next_remind_at))
             .await?;
@@ -166,13 +183,9 @@ pub fn should_send_reminder(user: &User, now: DateTime<Utc>) -> bool {
         return false;
     }
 
-    if user
-        .last_reminded_at
-        .is_some_and(|last_reminded_at| {
-            now.signed_duration_since(last_reminded_at)
-                < Duration::hours(MIN_REMIND_INTERVAL_HOURS)
-        })
-    {
+    if user.last_reminded_at.is_some_and(|last_reminded_at| {
+        now.signed_duration_since(last_reminded_at) < Duration::hours(MIN_REMIND_INTERVAL_HOURS)
+    }) {
         return false;
     }
 
@@ -280,11 +293,26 @@ mod tests {
 
     #[test]
     fn calculate_next_remind_at_uses_required_backoff_days() {
-        assert_eq!(calculate_next_remind_at(now(), 1), now() + Duration::days(1));
-        assert_eq!(calculate_next_remind_at(now(), 2), now() + Duration::days(3));
-        assert_eq!(calculate_next_remind_at(now(), 3), now() + Duration::days(7));
-        assert_eq!(calculate_next_remind_at(now(), 4), now() + Duration::days(14));
-        assert_eq!(calculate_next_remind_at(now(), 5), now() + Duration::days(30));
+        assert_eq!(
+            calculate_next_remind_at(now(), 1),
+            now() + Duration::days(1)
+        );
+        assert_eq!(
+            calculate_next_remind_at(now(), 2),
+            now() + Duration::days(3)
+        );
+        assert_eq!(
+            calculate_next_remind_at(now(), 3),
+            now() + Duration::days(7)
+        );
+        assert_eq!(
+            calculate_next_remind_at(now(), 4),
+            now() + Duration::days(14)
+        );
+        assert_eq!(
+            calculate_next_remind_at(now(), 5),
+            now() + Duration::days(30)
+        );
     }
 
     #[test]

@@ -18,7 +18,7 @@ impl ZundaBotDatabase {
         let guild_ids = sqlx::query_scalar::<_, i64>(
             r#"
         SELECT guild_id::BIGINT FROM guild
-        "#
+        "#,
         )
         .fetch_all(&*self.pool)
         .await?;
@@ -36,12 +36,11 @@ impl ZundaBotDatabase {
         &self,
         guild_id: i64,
     ) -> anyhow::Result<Vec<GuildMember>> {
-        let rows = sqlx::query_as::<_, GuildMember>(
-            r#"SELECT * FROM guild_member WHERE guild_id = $1"#,
-        )
-        .bind(guild_id)
-        .fetch_all(&*self.pool)
-        .await?;
+        let rows =
+            sqlx::query_as::<_, GuildMember>(r#"SELECT * FROM guild_member WHERE guild_id = $1"#)
+                .bind(guild_id)
+                .fetch_all(&*self.pool)
+                .await?;
         Ok(rows)
     }
 

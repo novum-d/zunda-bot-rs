@@ -32,6 +32,10 @@ use std::sync::Arc;
 async fn main() -> anyhow::Result<()> {
     dotenv().ok();
 
+    if env::var("ENABLE_DISCORD_BOT").context("'ENABLE_DISCORD_BOT' was not found")? == "false" {
+        return Ok(());
+    }
+
     let database_url = env::var("DATABASE_URL").context("'DATABASE_URL' was not found")?;
     let pool = PgPoolOptions::new()
         .max_connections(5)
@@ -67,22 +71,20 @@ async fn main() -> anyhow::Result<()> {
                                 tracing::warn!("birthday reminder message handler failed: {}", e);
                             }
                         }
-                        serenity::FullEvent::InteractionCreate { interaction } => {
-                            if let serenity::Interaction::Component(component) = interaction {
-                                match handler::interaction::handle_component_interaction(
-                                    data, component,
-                                )
-                                .await
-                                {
-                                    Ok(true) => {}
-                                    Ok(false) => {}
-                                    Err(e) => tracing::warn!(
-                                        "birthday reminder interaction handler failed: {}",
-                                        e
-                                    ),
-                                }
-                            }
-                        }
+                        serenity::FullEvent::InteractionCreate {
+                            interaction: serenity::Interaction::Component(component),
+                        } => match handler::interaction::handle_component_interaction(
+                            data, component,
+                        )
+                        .await
+                        {
+                            Ok(true) => {}
+                            Ok(false) => {}
+                            Err(e) => tracing::warn!(
+                                "birthday reminder interaction handler failed: {}",
+                                e
+                            ),
+                        },
                         _ => {}
                     }
                     Ok(())

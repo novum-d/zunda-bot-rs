@@ -132,7 +132,9 @@ impl GuildRepository {
         &self,
         active_since: DateTime<Utc>,
     ) -> anyhow::Result<Vec<GuildMember>> {
-        self.db.select_active_reminder_candidates(active_since).await
+        self.db
+            .select_active_reminder_candidates(active_since)
+            .await
     }
 
     pub async fn update_reminder_sent(
@@ -156,12 +158,7 @@ impl GuildRepository {
         next_remind_at: Option<DateTime<Utc>>,
     ) -> anyhow::Result<()> {
         self.db
-            .update_member_reminder_opt_out(
-                guild_id,
-                member_id,
-                is_remind_opt_out,
-                next_remind_at,
-            )
+            .update_member_reminder_opt_out(guild_id, member_id, is_remind_opt_out, next_remind_at)
             .await?;
         Ok(())
     }
