@@ -176,6 +176,7 @@ gcloud run services describe zunda-bot-rs \
 
 - [UML一覧](docs/uml/)
 - [UML整合性チェック](docs/uml/整合性チェック.md)
+- [誕生日未登録ユーザー向けリマインド機能 要件整理](docs/requirements/birthday_unregistered_reminder.md)
 
 ## デバッグ
 
