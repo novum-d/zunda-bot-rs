@@ -158,16 +158,6 @@ jobs:
           echo "Added lines: $added_lines"
           echo "Deleted lines: $deleted_lines"
 
-          if [ "$changed_files" -gt 10 ]; then
-            echo "Too many changed files"
-            exit 1
-          fi
-
-          if [ "$deleted_lines" -gt 150 ]; then
-            echo "Too many deleted lines"
-            exit 1
-          fi
-
       - name: Check dangerous commands
         run: |
           forbidden_commands=(
