@@ -30,6 +30,41 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Classify issue
+        id: issue_type
+        run: |
+          issue_title=$(printf '%s\n' "${{ github.event.issue.title }}")
+          issue_body=$(printf '%s\n' "${{ github.event.issue.body }}")
+
+          issue_kind="generic"
+          requires_src_tests="false"
+
+          if printf '%s\n' "$issue_title" | grep -q '^\[👔 ロジック実装\]'; then
+            issue_kind="logic"
+            requires_src_tests="true"
+          elif printf '%s\n' "$issue_title" | grep -q '^\[🐛 バグ\]'; then
+            issue_kind="bug"
+            requires_src_tests="true"
+          elif printf '%s\n' "$issue_title" | grep -q '^\[💡 機能提案\]'; then
+            issue_kind="feature"
+            requires_src_tests="true"
+          elif printf '%s\n' "$issue_title" | grep -q '^\[🎨 UI実装\]'; then
+            issue_kind="ui"
+            requires_src_tests="true"
+          elif printf '%s\n' "$issue_title" | grep -q '^\[🏗️ 雑用\]'; then
+            issue_kind="chore"
+          elif printf '%s\n' "$issue_title" | grep -q '^\[👋 後で実装\]'; then
+            issue_kind="later"
+          elif printf '%s\n' "$issue_body" | grep -qiE '^## Context$' \
+            && printf '%s\n' "$issue_body" | grep -qiE '^## Goal$' \
+            && printf '%s\n' "$issue_body" | grep -qiE '^## Acceptance Criteria$'; then
+            issue_kind="codex"
+            requires_src_tests="true"
+          fi
+
+          echo "kind=$issue_kind" >> "$GITHUB_OUTPUT"
+          echo "requires_src_tests=$requires_src_tests" >> "$GITHUB_OUTPUT"
+
       - name: Prepare prompt
         run: |
           mkdir -p .codex
@@ -50,12 +85,18 @@ jobs:
           Issue body:
           ${{ github.event.issue.body }}
 
+          Detected issue kind:
+          ${{ steps.issue_type.outputs.kind }}
+
           Rules:
           - Follow AGENTS.md
           - If the issue explicitly allows scope overrides, follow the issue scope
           - Keep changes under 300 lines
           - Do not modify forbidden files
-          - Do not touch workflows, deploy, infra, or secrets
+          - For implementation issues, do not finish with only .codex, prompt, or documentation changes
+          - For implementation issues, include at least one behavior-related change under src/** and validate it in tests/** when possible
+          - If repository policy blocks the required code path, stop and report the blocked path clearly
+          - Do not touch workflows, deploy, infra, or secrets unless the issue explicitly allows it
           - Write PR title and body in Japanese
           - Run cargo fmt --check, cargo clippy --all-targets --all-features -- -D warnings, cargo test
           - Stop if approval is required
@@ -177,10 +218,20 @@ jobs:
             exit 1
           fi
 
-      - name: Run checks
-        continue-on-error: true
+      - name: Require implementation file changes
         run: |
-          cargo clippy --fix --allow-dirty --allow-staged --all-targets --all-features
+          if [ "${{ steps.issue_type.outputs.requires_src_tests }}" = "true" ]; then
+            if git diff --name-only | grep -qE '^(src/|tests/)'; then
+              echo "Implementation-related files changed"
+            else
+              echo "Expected changes under src/ or tests/ for issue kind: ${{ steps.issue_type.outputs.kind }}"
+              exit 1
+            fi
+          fi
+
+      - name: Run checks
+        run: |
+          cargo clippy --all-targets --all-features -- -D warnings
           cargo test
 
       # 差分がない場合はPRを作らない
@@ -198,19 +249,26 @@ jobs:
         uses: peter-evans/create-pull-request@v8.1.1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "Issue #${{ github.event.issue.number }} の対応"
-          title: "Issue #${{ github.event.issue.number }} の対応"
+          commit-message: "${{ steps.issue_type.outputs.kind == 'chore' && format('Issue #{0} の雑用対応', github.event.issue.number) || steps.issue_type.outputs.kind == 'later' && format('Issue #{0} の保留タスク整理', github.event.issue.number) || format('Issue #{0} の実装対応', github.event.issue.number) }}"
+          title: "${{ steps.issue_type.outputs.kind == 'chore' && format('Issue #{0} の雑用対応', github.event.issue.number) || steps.issue_type.outputs.kind == 'later' && format('Issue #{0} の保留タスク整理', github.event.issue.number) || format('Issue #{0} の実装対応', github.event.issue.number) }}"
           body: |
             ## 概要
-            - Issue #${{ github.event.issue.number }} の対応
+            - Issue #${{ github.event.issue.number }} の${{ steps.issue_type.outputs.kind == 'chore' && '雑用対応' || steps.issue_type.outputs.kind == 'later' && '保留タスク整理' || '実装対応' }}
+            - 種別: `${{ steps.issue_type.outputs.kind }}`
 
             ## 変更内容
-            - Codex により実装
+            - ${{ steps.issue_type.outputs.kind == 'chore' && 'Codex により雑用・運用系変更を実施' || steps.issue_type.outputs.kind == 'later' && 'Codex により保留タスクの整理を実施' || 'Codex により実装を実施' }}
+
+            ## 変更ファイル
+            - 差分を確認してください
 
             ## テスト結果
             - cargo fmt --check
             - cargo clippy --all-targets --all-features -- -D warnings
             - cargo test
+
+            ## 制限事項
+            - 自動生成された要約のため、必要に応じて人手で補足してください
           draft: true
           branch: codex/issue-${{ github.event.issue.number }}
 

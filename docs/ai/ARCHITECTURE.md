@@ -187,6 +187,9 @@ Codex may:
 
 * Add small helper functions
 * Add new command handlers
+* Update existing usecases for feature work
+* Update `src/data/` when persistence or external access must change for the feature
+* Update shared models when the behavior requires it
 * Add tests
 * Improve logging
 * Improve error handling
@@ -195,6 +198,15 @@ Codex may:
 <!--
 小規模な共通化、ログ改善、エラーハンドリング改善は許可。
 -->
+
+For user-visible feature work, prefer editing the layer that actually owns the behavior instead of limiting changes to
+prompts, docs, or command wrappers.
+
+Examples:
+
+* Command option or response flow change: `src/commands/` and/or `src/usecase/`
+* Persistence or query change: `src/data/`
+* Shared type change required by the feature: `src/models/`
 
 ---
 

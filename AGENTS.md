@@ -41,6 +41,10 @@ Codex may only modify the following paths unless explicitly allowed in the issue
 
 * src/commands/**
 * src/services/**
+* src/usecase/**
+* src/data/**
+* src/models/**
+* src/worker/**
 * tests/**
 * README.md
 * docs/**
@@ -48,6 +52,14 @@ Codex may only modify the following paths unless explicitly allowed in the issue
 <!--
 Issue に明示されていない限り、上記以外のパスは変更してはいけない。
 -->
+
+For implementation requests, Codex should prefer changing behavior in `src/**` and validating it in `tests/**`.
+
+Prompt/config/docs-only changes are not considered a complete implementation unless the issue explicitly asks for
+documentation or Codex configuration updates.
+
+If a requested feature or bug fix cannot be completed without touching files outside the allowed paths, Codex must stop
+and explain the blocked path instead of finishing with only `.codex` or documentation changes.
 
 ---
 

@@ -209,3 +209,9 @@ Avoid:
 1 PR = 1 Issue を基本とする。
 複数機能をまとめない。
 -->
+
+For implementation issues, a PR should normally include behavior changes in repository code, not only prompt,
+configuration, or documentation edits.
+
+If Codex is blocked by repository policy from touching the required code path, it should stop and report that policy
+conflict clearly.

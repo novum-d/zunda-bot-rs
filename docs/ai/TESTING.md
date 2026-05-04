@@ -63,12 +63,16 @@ integration test は必要最低限にする。
 
 When adding a new feature:
 
+* Do not finish with documentation-only or Codex-configuration-only changes unless that was the explicit request
+* Change at least one behavior-related file under `src/**` unless blocked by repository policy
 * Add at least one test for the new behavior
 * Cover success cases
 * Cover expected failure cases if possible
 * Reuse existing test patterns
 
 <!--
+実装依頼なのに docs や Codex 設定だけで完了扱いにしない。
+ポリシーでブロックされていない限り `src/**` の挙動変更を含める。
 新機能追加時は最低1つ以上のテストを追加する。
 正常系だけでなく異常系も可能ならテストする。
 -->
