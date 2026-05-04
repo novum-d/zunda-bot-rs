@@ -1,7 +1,7 @@
 // DB接続や初期化など、DB全体の管理を担当
 
 use crate::models::data::GuildMember;
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use sqlx::PgPool;
 use std::sync::Arc;
 
@@ -15,7 +15,7 @@ impl ZundaBotDatabase {
     }
 
     pub async fn select_guild_ids(&self) -> anyhow::Result<Vec<i64>> {
-        let guild_ids = sqlx::query_scalar!(
+        let guild_ids = sqlx::query_scalar::<_, i64>(
             r#"
         SELECT guild_id::BIGINT FROM guild
         "#
@@ -26,7 +26,7 @@ impl ZundaBotDatabase {
     }
 
     pub async fn select_members(&self) -> anyhow::Result<Vec<GuildMember>> {
-        let rows = sqlx::query_as!(GuildMember, r#"SELECT * FROM guild_member"#)
+        let rows = sqlx::query_as::<_, GuildMember>(r#"SELECT * FROM guild_member"#)
             .fetch_all(&*self.pool)
             .await?;
         Ok(rows)
@@ -36,11 +36,10 @@ impl ZundaBotDatabase {
         &self,
         guild_id: i64,
     ) -> anyhow::Result<Vec<GuildMember>> {
-        let rows = sqlx::query_as!(
-            GuildMember,
+        let rows = sqlx::query_as::<_, GuildMember>(
             r#"SELECT * FROM guild_member WHERE guild_id = $1"#,
-            guild_id
         )
+        .bind(guild_id)
         .fetch_all(&*self.pool)
         .await?;
         Ok(rows)
@@ -51,27 +50,26 @@ impl ZundaBotDatabase {
         guild_id: i64,
         member_id: i64,
     ) -> anyhow::Result<Option<GuildMember>> {
-        let row = sqlx::query_as!(
-            GuildMember,
+        let row = sqlx::query_as::<_, GuildMember>(
             "SELECT * FROM guild_member WHERE guild_id = $1 AND member_id = $2",
-            guild_id,
-            member_id
         )
+        .bind(guild_id)
+        .bind(member_id)
         .fetch_optional(&*self.pool)
         .await?;
         Ok(row)
     }
 
     pub async fn update_guild(&self, guild_id: i64, guild_name: &str) -> anyhow::Result<()> {
-        sqlx::query!(
+        sqlx::query(
             r#"
         UPDATE guild
         SET name = $1
         WHERE guild_id = $2
         "#,
-            guild_name,
-            guild_id,
         )
+        .bind(guild_name)
+        .bind(guild_id)
         .execute(&*self.pool)
         .await?;
 
@@ -84,16 +82,16 @@ impl ZundaBotDatabase {
         member_id: i64,
         birth: NaiveDate,
     ) -> anyhow::Result<()> {
-        sqlx::query!(
+        sqlx::query(
             r#"
         UPDATE guild_member
         SET birth = $1
         WHERE guild_id = $2 AND member_id = $3
         "#,
-            birth,
-            guild_id,
-            member_id,
         )
+        .bind(birth)
+        .bind(guild_id)
+        .bind(member_id)
         .execute(&*self.pool)
         .await?;
         Ok(())
@@ -104,15 +102,15 @@ impl ZundaBotDatabase {
         guild_id: i64,
         member_id: i64,
     ) -> anyhow::Result<()> {
-        sqlx::query!(
+        sqlx::query(
             r#"
         UPDATE guild_member
         SET birth = NULL, last_notified = NULL
         WHERE guild_id = $1 AND member_id = $2
         "#,
-            guild_id,
-            member_id,
         )
+        .bind(guild_id)
+        .bind(member_id)
         .execute(&*self.pool)
         .await?;
         Ok(())
@@ -124,53 +122,53 @@ impl ZundaBotDatabase {
         member_id: i64,
         last_notified: NaiveDate,
     ) -> anyhow::Result<()> {
-        sqlx::query!(
+        sqlx::query(
             r#"
         UPDATE guild_member
         SET last_notified = $1
         WHERE guild_id = $2 AND member_id = $3
         "#,
-            last_notified,
-            guild_id,
-            member_id,
         )
+        .bind(last_notified)
+        .bind(guild_id)
+        .bind(member_id)
         .execute(&*self.pool)
         .await?;
         Ok(())
     }
 
     pub async fn delete_guild(&self, guild_id: i64) -> anyhow::Result<()> {
-        sqlx::query!(
+        sqlx::query(
             r#"
         DELETE FROM guild_member
         WHERE guild_id = $1
         "#,
-            guild_id,
         )
+        .bind(guild_id)
         .execute(&*self.pool)
         .await?;
 
-        sqlx::query!(
+        sqlx::query(
             r#"
         DELETE FROM guild
         WHERE guild_id = $1
         "#,
-            guild_id,
         )
+        .bind(guild_id)
         .execute(&*self.pool)
         .await?;
         Ok(())
     }
 
     pub async fn delete_guild_member(&self, guild_id: i64, member_id: i64) -> anyhow::Result<()> {
-        sqlx::query!(
+        sqlx::query(
             r#"
         DELETE FROM guild_member
         WHERE guild_id = $1 AND member_id = $2
         "#,
-            guild_id,
-            member_id,
         )
+        .bind(guild_id)
+        .bind(member_id)
         .execute(&*self.pool)
         .await?;
         Ok(())
@@ -181,15 +179,15 @@ impl ZundaBotDatabase {
         guild_id: i64,
         guild_name: Option<&str>,
     ) -> anyhow::Result<()> {
-        sqlx::query!(
+        sqlx::query(
             r#"
         INSERT INTO guild (guild_id, name)
         VALUES ($1, $2)
         ON CONFLICT (guild_id) DO NOTHING
         "#,
-            guild_id,
-            guild_name,
         )
+        .bind(guild_id)
+        .bind(guild_name)
         .execute(&*self.pool)
         .await?;
         Ok(())
@@ -201,16 +199,107 @@ impl ZundaBotDatabase {
         member_id: i64,
         birth: Option<NaiveDate>,
     ) -> anyhow::Result<()> {
-        sqlx::query!(
+        sqlx::query(
             r#"
         INSERT INTO guild_member (guild_id, member_id, birth)
         VALUES ($1, $2, $3)
         ON CONFLICT (guild_id, member_id) DO NOTHING
         "#,
-            guild_id,
-            member_id,
-            birth,
         )
+        .bind(guild_id)
+        .bind(member_id)
+        .bind(birth)
+        .execute(&*self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn update_member_last_active(
+        &self,
+        guild_id: i64,
+        member_id: i64,
+        now: DateTime<Utc>,
+        first_remind_at: DateTime<Utc>,
+    ) -> anyhow::Result<()> {
+        sqlx::query(
+            r#"
+        UPDATE guild_member
+        SET last_active_at = $1,
+            next_remind_at = COALESCE(next_remind_at, $2)
+        WHERE guild_id = $3 AND member_id = $4
+        "#,
+        )
+        .bind(now)
+        .bind(first_remind_at)
+        .bind(guild_id)
+        .bind(member_id)
+        .execute(&*self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn select_active_reminder_candidates(
+        &self,
+        active_since: DateTime<Utc>,
+    ) -> anyhow::Result<Vec<GuildMember>> {
+        let rows = sqlx::query_as::<_, GuildMember>(
+            r#"
+        SELECT *
+        FROM guild_member
+        WHERE last_active_at >= $1
+        ORDER BY guild_id, member_id
+        "#,
+        )
+        .bind(active_since)
+        .fetch_all(&*self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn update_member_reminder_sent(
+        &self,
+        guild_id: i64,
+        member_id: i64,
+        now: DateTime<Utc>,
+        next_remind_at: DateTime<Utc>,
+    ) -> anyhow::Result<()> {
+        sqlx::query(
+            r#"
+        UPDATE guild_member
+        SET last_reminded_at = $1,
+            remind_count = remind_count + 1,
+            next_remind_at = $2
+        WHERE guild_id = $3 AND member_id = $4
+        "#,
+        )
+        .bind(now)
+        .bind(next_remind_at)
+        .bind(guild_id)
+        .bind(member_id)
+        .execute(&*self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn update_member_reminder_opt_out(
+        &self,
+        guild_id: i64,
+        member_id: i64,
+        is_remind_opt_out: bool,
+        next_remind_at: Option<DateTime<Utc>>,
+    ) -> anyhow::Result<()> {
+        sqlx::query(
+            r#"
+        UPDATE guild_member
+        SET is_remind_opt_out = $1,
+            next_remind_at = $2
+        WHERE guild_id = $3 AND member_id = $4
+        "#,
+        )
+        .bind(is_remind_opt_out)
+        .bind(next_remind_at)
+        .bind(guild_id)
+        .bind(member_id)
         .execute(&*self.pool)
         .await?;
         Ok(())

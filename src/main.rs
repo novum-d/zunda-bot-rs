@@ -1,6 +1,8 @@
 mod commands;
 mod data;
+mod handler;
 mod models;
+mod reminder;
 mod res;
 mod services;
 mod usecase;
@@ -8,6 +10,7 @@ mod worker;
 
 use crate::commands::birth::birth;
 use crate::models::common::Data;
+use crate::reminder::service::ReminderService;
 use crate::services::healthcheck::run_healthcheck_server;
 use crate::usecase::birth_list_usecase::BirthListUsecase;
 use crate::usecase::birth_notify_usecase::BirthNotifyUsecase;
@@ -54,6 +57,37 @@ async fn main() -> anyhow::Result<()> {
                 hello(),
                 birth(),
             ],
+            event_handler: |ctx, event, _framework, data| {
+                Box::pin(async move {
+                    match event {
+                        serenity::FullEvent::Message { new_message } => {
+                            if let Err(e) =
+                                handler::message::handle_message(ctx, data, new_message).await
+                            {
+                                tracing::warn!("birthday reminder message handler failed: {}", e);
+                            }
+                        }
+                        serenity::FullEvent::InteractionCreate { interaction } => {
+                            if let serenity::Interaction::Component(component) = interaction {
+                                match handler::interaction::handle_component_interaction(
+                                    data, component,
+                                )
+                                .await
+                                {
+                                    Ok(true) => {}
+                                    Ok(false) => {}
+                                    Err(e) => tracing::warn!(
+                                        "birthday reminder interaction handler failed: {}",
+                                        e
+                                    ),
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    Ok(())
+                })
+            },
             ..Default::default()
         })
         .setup(move |ctx, _ready, framework| {
@@ -64,9 +98,16 @@ async fn main() -> anyhow::Result<()> {
                 let birth_reset_usecase = BirthResetUsecase::new(pool.clone(), ctx.http.clone())?;
                 let birth_notify_usecase = BirthNotifyUsecase::new(pool.clone(), ctx.http.clone())?;
                 let guild_update_usecase = GuildUpdateUsecase::new(pool.clone(), ctx.http.clone())?;
+                let reminder_service = ReminderService::new(pool.clone(), ctx.http.clone())?;
+                let reminder_scan_service = ReminderService::new(pool.clone(), ctx.http.clone())?;
                 guild_update_usecase.invoke().await?;
 
                 tokio::spawn(AnnualBirthdayNotifier::run(birth_notify_usecase));
+                tokio::spawn(async move {
+                    if let Err(e) = run_healthcheck_server(reminder_scan_service).await {
+                        tracing::error!("Healthcheck server stopped: {}", e);
+                    }
+                });
 
                 poise::builtins::register_globally(ctx, &framework.options().commands).await?;
 
@@ -75,6 +116,8 @@ async fn main() -> anyhow::Result<()> {
                     birth_signup_usecase,
                     birth_reset_usecase,
                     guild_update_usecase,
+                    reminder_service,
+                    discord_http: ctx.http.clone(),
                 };
                 Ok(data)
             })
@@ -89,8 +132,5 @@ async fn main() -> anyhow::Result<()> {
         Ok::<(), anyhow::Error>(())
     };
 
-    tokio::select! {
-        result = run_healthcheck_server() => result.context("Healthcheck server stopped"),
-        result = bot => result.context("Discord bot stopped"),
-    }
+    bot.await.context("Discord bot stopped")
 }

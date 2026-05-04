@@ -29,6 +29,7 @@ impl BirthNotifyUsecase {
             member_id,
             birth,
             last_notified,
+            ..
         } in members
         {
             // メンバーの誕生日を取得

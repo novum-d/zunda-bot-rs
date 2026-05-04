@@ -2,7 +2,7 @@ use crate::data::zunda_bot_database::ZundaBotDatabase;
 use crate::models::common::Context;
 use crate::models::data::GuildMember;
 use crate::models::domain::{MyGuild, MyGuildMember};
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use poise::serenity_prelude::{GuildId, Http};
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -43,6 +43,14 @@ impl GuildRepository {
             .insert_guild_member(guild_id, member_id, birth)
             .await?;
         Ok(())
+    }
+
+    pub async fn get_member(
+        &self,
+        guild_id: i64,
+        member_id: i64,
+    ) -> anyhow::Result<Option<GuildMember>> {
+        self.db.select_member_by_id(guild_id, member_id).await
     }
 
     pub async fn delete_guild(&self, guild_id: i64) -> anyhow::Result<()> {
@@ -103,6 +111,57 @@ impl GuildRepository {
     ) -> anyhow::Result<()> {
         self.db
             .update_guild_member_last_notified(guild_id, member_id, last_notified)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn update_last_active(
+        &self,
+        guild_id: i64,
+        member_id: i64,
+        now: DateTime<Utc>,
+        first_remind_at: DateTime<Utc>,
+    ) -> anyhow::Result<()> {
+        self.db
+            .update_member_last_active(guild_id, member_id, now, first_remind_at)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn get_active_reminder_candidates(
+        &self,
+        active_since: DateTime<Utc>,
+    ) -> anyhow::Result<Vec<GuildMember>> {
+        self.db.select_active_reminder_candidates(active_since).await
+    }
+
+    pub async fn update_reminder_sent(
+        &self,
+        guild_id: i64,
+        member_id: i64,
+        now: DateTime<Utc>,
+        next_remind_at: DateTime<Utc>,
+    ) -> anyhow::Result<()> {
+        self.db
+            .update_member_reminder_sent(guild_id, member_id, now, next_remind_at)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn update_reminder_opt_out(
+        &self,
+        guild_id: i64,
+        member_id: i64,
+        is_remind_opt_out: bool,
+        next_remind_at: Option<DateTime<Utc>>,
+    ) -> anyhow::Result<()> {
+        self.db
+            .update_member_reminder_opt_out(
+                guild_id,
+                member_id,
+                is_remind_opt_out,
+                next_remind_at,
+            )
             .await?;
         Ok(())
     }

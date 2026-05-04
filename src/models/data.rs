@@ -1,4 +1,4 @@
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct GuildMember {
@@ -6,4 +6,9 @@ pub struct GuildMember {
     pub member_id: i64,
     pub birth: Option<NaiveDate>,
     pub last_notified: Option<NaiveDate>,
+    pub last_active_at: Option<DateTime<Utc>>,
+    pub last_reminded_at: Option<DateTime<Utc>>,
+    pub next_remind_at: Option<DateTime<Utc>>,
+    pub remind_count: i32,
+    pub is_remind_opt_out: bool,
 }
