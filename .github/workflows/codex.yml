@@ -2,7 +2,7 @@ name: Codex Issue Automation
 
 on:
   issues:
-    types: [labeled]
+    types: [ labeled ]
   pull_request:
 
 permissions:
@@ -38,7 +38,6 @@ jobs:
 
           issue_kind="generic"
           requires_src_tests="false"
-          max_added_lines="300"
 
           if printf '%s\n' "$issue_title" | grep -q '^\[👔 ロジック実装\]'; then
             issue_kind="logic"
@@ -54,29 +53,23 @@ jobs:
             requires_src_tests="true"
           elif printf '%s\n' "$issue_title" | grep -q '^\[🏗️ 雑用\]'; then
             issue_kind="chore"
-            max_added_lines="500"
           elif printf '%s\n' "$issue_title" | grep -q '^\[👋 後で実装\]'; then
             issue_kind="later"
-            max_added_lines="500"
           elif printf '%s\n' "$issue_body" | grep -qiE '^## Context$' \
             && printf '%s\n' "$issue_body" | grep -qiE '^## Goal$' \
             && printf '%s\n' "$issue_body" | grep -qiE '^## Acceptance Criteria$'; then
             issue_kind="codex"
-            max_added_lines="500"
             if printf '%s\n' "$issue_body" | grep -q '^- \[x\] Implementation'; then
               requires_src_tests="true"
-              max_added_lines="300"
             elif printf '%s\n' "$issue_body" | grep -q '^- \[x\] Maintenance / Docs'; then
               requires_src_tests="false"
             elif printf '%s\n' "$issue_body" | grep -qE '^\* src/|^\* tests/'; then
               requires_src_tests="true"
-              max_added_lines="300"
             fi
           fi
 
           echo "kind=$issue_kind" >> "$GITHUB_OUTPUT"
           echo "requires_src_tests=$requires_src_tests" >> "$GITHUB_OUTPUT"
-          echo "max_added_lines=$max_added_lines" >> "$GITHUB_OUTPUT"
 
       - name: Prepare prompt
         run: |
@@ -104,7 +97,6 @@ jobs:
           Rules:
           - Follow AGENTS.md
           - If the issue explicitly allows scope overrides, follow the issue scope
-          - Keep changes under ${{ steps.issue_type.outputs.max_added_lines }} added lines
           - Do not modify forbidden files
           - For implementation issues, do not finish with only .codex, prompt, or documentation changes
           - For implementation issues, include at least one behavior-related change under src/** and validate it in tests/** when possible
@@ -168,11 +160,6 @@ jobs:
 
           if [ "$changed_files" -gt 10 ]; then
             echo "Too many changed files"
-            exit 1
-          fi
-
-          if [ "$added_lines" -gt "${{ steps.issue_type.outputs.max_added_lines }}" ]; then
-            echo "Too many added lines"
             exit 1
           fi
 

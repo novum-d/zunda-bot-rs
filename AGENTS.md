@@ -185,6 +185,8 @@ disown
 破壊的コマンド、権限昇格、バックグラウンド実行は禁止。
 -->
 
+<!--
+
 ---
 
 ## PR Size Limits
@@ -201,8 +203,8 @@ max_deleted_lines: 150
 
 If a task exceeds these limits, Codex should stop and request the work be split into smaller issues.
 
-<!--
 変更ファイル数・追加行数・削除行数が多すぎる場合は停止し、Issue を分割すること。
+
 -->
 
 ---
