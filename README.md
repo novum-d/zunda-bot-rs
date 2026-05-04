@@ -12,6 +12,7 @@ Discord Botサービスをローカル、Docker、または Google Cloud Run（G
 
 > [!NOTE]  
 > セットアップ前に以下でリポジトリをダウンロードしておいてください
+>
 >```shell
 >git clone git@github.com:novum-d/zunda-bot-rs.git
 >cd zunda-bot-rs
@@ -95,14 +96,14 @@ gcloud services enable \
 
 5.2. 実行に必要な IAM ロールを付与
 
-- デプロイ実行ユーザー（あなたのGoogleアカウント）
-  - `roles/run.admin`
-  - `roles/artifactregistry.writer`
-  - `roles/cloudbuild.builds.editor`
-  - `roles/secretmanager.admin`
-  - `roles/iam.serviceAccountUser`（Cloud Run 実行用サービスアカウントに対して）
-- Cloud Run 実行用サービスアカウント
-  - `roles/secretmanager.secretAccessor`（`DATABASE_URL` / `DISCORD_TOKEN` を読むため）
+* デプロイ実行ユーザー（あなたのGoogleアカウント）
+  * `roles/run.admin`
+  * `roles/artifactregistry.writer`
+  * `roles/cloudbuild.builds.editor`
+  * `roles/secretmanager.admin`
+  * `roles/iam.serviceAccountUser`（Cloud Run 実行用サービスアカウントに対して）
+* Cloud Run 実行用サービスアカウント
+  * `roles/secretmanager.secretAccessor`（`DATABASE_URL` / `DISCORD_TOKEN` を読むため）
 
 5.3. GCP の初期セットアップ
 
@@ -174,9 +175,8 @@ gcloud run services describe zunda-bot-rs \
 
 ## 設計資料
 
-- [UML一覧](docs/uml/)
-- [UML整合性チェック](docs/uml/整合性チェック.md)
-- [誕生日未登録ユーザー向けリマインド機能 要件整理](docs/requirements/birthday_unregistered_reminder.md)
+* [UML一覧](docs/uml/)
+* [UML整合性チェック](docs/uml/整合性チェック.md)
 
 ## デバッグ
 
@@ -205,7 +205,6 @@ gcloud run services describe zunda-bot-rs \
 [docs]: https://github.com/novum-d/zunda-bot-rs/tree/main/docs
 
 [docs-badge]: https://img.shields.io/badge/docs-blue
-
 
 [rust-version-badge]: https://img.shields.io/badge/rust-1.87.0+-93450a.svg?style=flat-square
 
