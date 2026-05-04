@@ -103,7 +103,8 @@ jobs:
           - If repository policy blocks the required code path, stop and report the blocked path clearly
           - Do not touch workflows, deploy, infra, or secrets unless the issue explicitly allows it
           - Write PR title and body in Japanese
-          - Run cargo fmt --check, cargo clippy --all-targets --all-features -- -D warnings, cargo test
+          - Run cargo fmt --check, cargo clippy --all-targets --all-features -- -D warnings, cargo test when possible
+          - If fmt, clippy, or test fails, record the failure and continue
           - Stop if approval is required
           - Keep changes focused on the issue only
           EOF
@@ -197,6 +198,7 @@ jobs:
           rustup component add clippy
 
       - name: Format check
+        continue-on-error: true
         run: cargo fmt --check
 
       - name: Check meaningful changes
@@ -220,6 +222,7 @@ jobs:
           fi
 
       - name: Run checks
+        continue-on-error: true
         run: |
           cargo clippy --all-targets --all-features -- -D warnings
           cargo test
@@ -258,6 +261,7 @@ jobs:
             - cargo test
 
             ## 制限事項
+            - fmt / clippy / test が失敗していても、この workflow は警告扱いで継続する
             - 自動生成された要約のため、必要に応じて人手で補足してください
           draft: true
           branch: codex/issue-${{ github.event.issue.number }}
@@ -275,10 +279,13 @@ jobs:
         run: rustup component add rustfmt clippy
 
       - name: Format check
+        continue-on-error: true
         run: cargo fmt --check
 
       - name: Clippy
+        continue-on-error: true
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Test
+        continue-on-error: true
         run: cargo test

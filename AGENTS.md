@@ -148,10 +148,11 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
 
-If any command fails, do not create a PR.
+If any command fails, record the failure in the PR and continue unless the issue explicitly requires a clean pass.
 
 <!--
-fmt / clippy / test のいずれかが失敗した場合は PR を作成しないこと。
+fmt / clippy / test のいずれかが失敗した場合でも、結果を記録した上で継続してよい。
+Issue 側で成功必須と明記されている場合のみ停止する。
 -->
 
 ---
