@@ -11,7 +11,7 @@ mod worker;
 use crate::commands::birth::birth;
 use crate::models::common::Data;
 use crate::reminder::service::ReminderService;
-use crate::services::healthcheck::run_healthcheck_server;
+use crate::services::healthcheck::{run_healthcheck_server, run_passive_healthcheck_server};
 use crate::usecase::birth_list_usecase::BirthListUsecase;
 use crate::usecase::birth_notify_usecase::BirthNotifyUsecase;
 use crate::usecase::birth_reset_usecase::BirthResetUsecase;
@@ -33,7 +33,9 @@ async fn main() -> anyhow::Result<()> {
     dotenv().ok();
 
     if env::var("ENABLE_DISCORD_BOT").context("'ENABLE_DISCORD_BOT' was not found")? == "false" {
-        return Ok(());
+        return run_passive_healthcheck_server()
+            .await
+            .context("Passive healthcheck server stopped");
     }
 
     let database_url = env::var("DATABASE_URL").context("'DATABASE_URL' was not found")?;

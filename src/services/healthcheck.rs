@@ -7,12 +7,18 @@ use tokio::net::TcpListener;
 pub async fn run_healthcheck_server(reminder_service: ReminderService) -> anyhow::Result<()> {
     let port = env::var("PORT").unwrap_or_else(|_| "8080".to_string());
     let port: u16 = port.parse()?;
-    run_healthcheck_server_on(port, reminder_service).await
+    run_healthcheck_server_on(port, Some(reminder_service)).await
+}
+
+pub async fn run_passive_healthcheck_server() -> anyhow::Result<()> {
+    let port = env::var("PORT").unwrap_or_else(|_| "8080".to_string());
+    let port: u16 = port.parse()?;
+    run_healthcheck_server_on(port, None).await
 }
 
 pub async fn run_healthcheck_server_on(
     port: u16,
-    reminder_service: ReminderService,
+    reminder_service: Option<ReminderService>,
 ) -> anyhow::Result<()> {
     let listener = TcpListener::bind(format!("0.0.0.0:{port}")).await?;
 
@@ -21,7 +27,7 @@ pub async fn run_healthcheck_server_on(
         let mut buffer = [0_u8; 1024];
         let read_size = stream.read(&mut buffer).await?;
         let request = String::from_utf8_lossy(&buffer[..read_size]);
-        let response = handle_request(&request, &reminder_service).await;
+        let response = handle_request(&request, reminder_service.as_ref()).await;
 
         if let Err(e) = stream.write_all(response.as_bytes()).await {
             tracing::warn!("Failed to write healthcheck response: {}", e);
@@ -33,9 +39,12 @@ pub(crate) fn response_bytes() -> &'static [u8] {
     b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK"
 }
 
-async fn handle_request(request: &str, reminder_service: &ReminderService) -> String {
+async fn handle_request(request: &str, reminder_service: Option<&ReminderService>) -> String {
     let request_line = request.lines().next().unwrap_or_default();
     if request_line.starts_with("POST /internal/reminder/scan ") {
+        let Some(reminder_service) = reminder_service else {
+            return json_response(503, r#"{"error":"reminder scan disabled"}"#);
+        };
         return match reminder_service.scan_and_send().await {
             Ok(sent_count) => json_response(200, &format!(r#"{{"sent":{sent_count}}}"#)),
             Err(e) => {
@@ -51,6 +60,7 @@ async fn handle_request(request: &str, reminder_service: &ReminderService) -> St
 fn json_response(status: u16, body: &str) -> String {
     let status_text = match status {
         200 => "OK",
+        503 => "Service Unavailable",
         500 => "Internal Server Error",
         _ => "OK",
     };
