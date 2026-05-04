@@ -6,6 +6,11 @@
 
 何を達成したいか
 
+## Task Type
+
+- [ ] Implementation
+- [ ] Maintenance / Docs
+
 ## Non-goals
 
 今回やらないこと
