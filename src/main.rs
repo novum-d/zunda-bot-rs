@@ -32,11 +32,16 @@ use std::sync::Arc;
 async fn main() -> anyhow::Result<()> {
     dotenv().ok();
 
-    tracing_subscriber::fmt()
-        .with_ansi(true)
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .pretty()
-        .init();
+    let subscriber = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env());
+
+    if cfg!(debug_assertions) {
+        // 開発時（デバッグビルド）は色付き・整形あり
+        subscriber.with_ansi(true).pretty().init();
+    } else {
+        // 本番（リリースビルド）はシンプルに1行で出力
+        subscriber.with_ansi(false).compact().init();
+    }
 
     if env::var("ENABLE_DISCORD_BOT").context("'ENABLE_DISCORD_BOT' was not found")? == "false" {
         return run_passive_healthcheck_server()
