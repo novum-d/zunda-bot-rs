@@ -32,6 +32,12 @@ use std::sync::Arc;
 async fn main() -> anyhow::Result<()> {
     dotenv().ok();
 
+    tracing_subscriber::fmt()
+        .with_ansi(true)
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .pretty()
+        .init();
+
     if env::var("ENABLE_DISCORD_BOT").context("'ENABLE_DISCORD_BOT' was not found")? == "false" {
         return run_passive_healthcheck_server()
             .await
