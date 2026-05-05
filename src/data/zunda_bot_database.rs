@@ -5,6 +5,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use sqlx::PgPool;
 use std::sync::Arc;
 
+#[derive(Clone)]
 pub struct ZundaBotDatabase {
     pool: Arc<PgPool>,
 }

@@ -7,6 +7,7 @@ use poise::serenity_prelude::{GuildId, Http};
 use sqlx::PgPool;
 use std::sync::Arc;
 
+#[derive(Clone)]
 pub struct GuildRepository {
     db: ZundaBotDatabase,
     http: Arc<Http>,

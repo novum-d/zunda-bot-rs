@@ -19,6 +19,7 @@ pub const STOP_BUTTON_PREFIX: &str = "birth_reminder_stop";
 
 pub type User = GuildMember;
 
+#[derive(Clone)]
 pub struct ReminderService {
     guild_repo: GuildRepository,
     http: Arc<Http>,

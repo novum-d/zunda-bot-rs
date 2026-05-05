@@ -21,17 +21,45 @@ pub async fn run_healthcheck_server_on(
     reminder_service: Option<ReminderService>,
 ) -> anyhow::Result<()> {
     let listener = TcpListener::bind(format!("0.0.0.0:{port}")).await?;
+    tracing::info!("Healthcheck server listening on 0.0.0.0:{}", port);
 
     loop {
         let (mut stream, _) = listener.accept().await?;
-        let mut buffer = [0_u8; 1024];
-        let read_size = stream.read(&mut buffer).await?;
-        let request = String::from_utf8_lossy(&buffer[..read_size]);
-        let response = handle_request(&request, reminder_service.as_ref()).await;
+        let reminder_service = reminder_service.clone();
 
-        if let Err(e) = stream.write_all(response.as_bytes()).await {
-            tracing::warn!("Failed to write healthcheck response: {}", e);
-        }
+        tokio::spawn(async move {
+            let mut buffer = [0_u8; 1024];
+            // タイムアウトを設定して、リクエストを送ってこない接続でリソースが枯渇するのを防ぐ
+            let read_result =
+                tokio::time::timeout(std::time::Duration::from_secs(5), stream.read(&mut buffer))
+                    .await;
+
+            let read_size = match read_result {
+                Ok(Ok(0)) => return, // Connection closed
+                Ok(Ok(n)) => n,
+                Ok(Err(e)) => {
+                    tracing::warn!("Failed to read from stream: {}", e);
+                    return;
+                }
+                Err(_) => {
+                    tracing::debug!("Healthcheck request timed out");
+                    return;
+                }
+            };
+
+            let request = String::from_utf8_lossy(&buffer[..read_size]);
+            tracing::debug!(%request, "received healthcheck request");
+            let response = handle_request(&request, reminder_service.as_ref()).await;
+            tracing::debug!(?response, "healthcheck response");
+
+            if let Err(e) = stream.write_all(response.as_bytes()).await {
+                tracing::warn!("Failed to write healthcheck response: {}", e);
+            }
+
+            // 明示的にフラッシュとシャットダウンを行い、クライアントにレスポンス完了を伝える
+            let _ = stream.flush().await;
+            let _ = stream.shutdown().await;
+        });
     }
 }
 
