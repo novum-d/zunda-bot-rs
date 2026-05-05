@@ -65,6 +65,7 @@ async fn main() -> anyhow::Result<()> {
 
     let intents = GatewayIntents::GUILD_MEMBERS // ギルドメンバー情報取得権限
         | GatewayIntents::GUILD_MESSAGES // ギルド内のメッセージイベント受信権限
+        | GatewayIntents::GUILD_MESSAGE_REACTIONS // ギルド内のリアクションイベント受信権限
         | GatewayIntents::DIRECT_MESSAGES
         | GatewayIntents::MESSAGE_CONTENT;
 
@@ -84,6 +85,14 @@ async fn main() -> anyhow::Result<()> {
                                 handler::message::handle_message(ctx, data, new_message).await
                             {
                                 tracing::warn!("birthday reminder message handler failed: {}", e);
+                            }
+                        }
+                        serenity::FullEvent::ReactionAdd { add_reaction } => {
+                            if let Err(e) =
+                                handler::reaction::handle_reaction_add(ctx, data, add_reaction)
+                                    .await
+                            {
+                                tracing::warn!("birthday reminder reaction handler failed: {}", e);
                             }
                         }
                         serenity::FullEvent::InteractionCreate {

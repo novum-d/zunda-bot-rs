@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use chrono::{DateTime, Duration, Utc};
 use serenity::all::{
     ButtonStyle, ChannelId, ChannelType, CreateActionRow, CreateButton, CreateChannel,
-    CreateMessage, GuildId, Http, Message, MessageId, UserId,
+    CreateMessage, GuildId, Http, Message, MessageId, Reaction, UserId,
 };
 use sqlx::PgPool;
 use std::collections::{HashMap, HashSet};
@@ -54,16 +54,40 @@ impl ReminderService {
     }
 
     pub async fn record_message_activity(&self, message: &Message) -> anyhow::Result<()> {
-        if message.author.bot {
+        if !is_user_activity_recordable(message.author.bot, message.guild_id.is_some()) {
             return Ok(());
         }
 
         let Some(guild_id) = message.guild_id else {
             return Ok(());
         };
-
         let guild_id = i64::from(guild_id);
         let member_id = i64::from(message.author.id);
+        self.record_member_activity(guild_id, member_id).await
+    }
+
+    pub async fn record_reaction_activity(&self, reaction: &Reaction) -> anyhow::Result<()> {
+        let user_is_bot = match &reaction.member {
+            Some(member) => member.user.bot,
+            None => reaction.user(&self.http).await?.bot,
+        };
+
+        if !is_user_activity_recordable(user_is_bot, reaction.guild_id.is_some()) {
+            return Ok(());
+        }
+
+        let Some(guild_id) = reaction.guild_id else {
+            return Ok(());
+        };
+        let Some(user_id) = reaction.user_id else {
+            return Ok(());
+        };
+
+        self.record_member_activity(i64::from(guild_id), i64::from(user_id))
+            .await
+    }
+
+    async fn record_member_activity(&self, guild_id: i64, member_id: i64) -> anyhow::Result<()> {
         let now = Utc::now();
         let first_remind_at = now + Duration::days(FIRST_REMIND_DELAY_DAYS);
 
@@ -484,6 +508,10 @@ fn stagger_delay(user: &User) -> std::time::Duration {
     std::time::Duration::from_secs(seconds)
 }
 
+fn is_user_activity_recordable(user_is_bot: bool, has_guild: bool) -> bool {
+    !user_is_bot && has_guild
+}
+
 async fn fetch_non_bot_display_name(
     http: &Http,
     guild_id: GuildId,
@@ -604,6 +632,17 @@ mod tests {
         user.next_remind_at = None;
 
         assert!(should_show_manual_reminder_candidate(&user, now()));
+    }
+
+    #[test]
+    fn user_activity_is_recordable_for_non_bot_guild_events() {
+        assert!(is_user_activity_recordable(false, true));
+    }
+
+    #[test]
+    fn user_activity_is_not_recordable_for_bots_or_non_guild_events() {
+        assert!(!is_user_activity_recordable(true, true));
+        assert!(!is_user_activity_recordable(false, false));
     }
 
     #[test]
