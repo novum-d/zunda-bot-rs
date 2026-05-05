@@ -29,6 +29,10 @@ impl BirthSignupUsecase {
             return Ok(());
         };
 
+        // モーダル送信後はインタラクションが一度終了するため、
+        // 以降の応答は defer してから行う必要がある。
+        poise_ctx.defer_ephemeral().await?;
+
         let birth = NaiveDate::parse_from_str(&format!("1970/{input_birth}"), "%Y/%m/%d");
         if birth.is_err() {
             // 誕生日の入力フォーマットが無効

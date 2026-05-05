@@ -137,6 +137,11 @@ where
         )
         .await
     {
-        tracing::warn!("failed to send fallback error response: {}", send_err);
+        let err_str = send_err.to_string();
+        if err_str.contains("Interaction has already been acknowledged") {
+            tracing::debug!("interaction already acknowledged, skipping error report reply");
+        } else {
+            tracing::warn!("failed to send fallback error response: {}", send_err);
+        }
     }
 }
