@@ -9,6 +9,7 @@ mod usecase;
 mod worker;
 
 use crate::commands::birth::birth;
+use crate::commands::setup::setup;
 use crate::models::common::Data;
 use crate::reminder::service::ReminderService;
 use crate::services::healthcheck::{run_healthcheck_server, run_passive_healthcheck_server};
@@ -73,6 +74,7 @@ async fn main() -> anyhow::Result<()> {
                 // コマンドはここに追加
                 hello(),
                 birth(),
+                setup(),
             ],
             event_handler: |ctx, event, _framework, data| {
                 Box::pin(async move {

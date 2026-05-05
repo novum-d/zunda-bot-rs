@@ -46,14 +46,6 @@ impl GuildRepository {
         Ok(())
     }
 
-    pub async fn get_member(
-        &self,
-        guild_id: i64,
-        member_id: i64,
-    ) -> anyhow::Result<Option<GuildMember>> {
-        self.db.select_member_by_id(guild_id, member_id).await
-    }
-
     pub async fn delete_guild(&self, guild_id: i64) -> anyhow::Result<()> {
         self.db.delete_guild(guild_id).await?;
         Ok(())
@@ -76,6 +68,10 @@ impl GuildRepository {
     ) -> anyhow::Result<Option<NaiveDate>, anyhow::Error> {
         let member = self.db.select_member_by_id(guild_id, member_id).await?;
         Ok(member.and_then(|m| m.birth))
+    }
+
+    pub async fn is_admin_member(&self, member_id: i64) -> anyhow::Result<bool> {
+        self.db.select_member_is_admin(member_id).await
     }
 
     pub async fn update_member_birth(
@@ -138,6 +134,16 @@ impl GuildRepository {
             .await
     }
 
+    pub async fn get_active_reminder_candidate(
+        &self,
+        member_id: i64,
+        active_since: DateTime<Utc>,
+    ) -> anyhow::Result<Option<GuildMember>> {
+        self.db
+            .select_active_reminder_candidate_by_member_id(member_id, active_since)
+            .await
+    }
+
     pub async fn update_reminder_sent(
         &self,
         guild_id: i64,
@@ -151,6 +157,40 @@ impl GuildRepository {
         Ok(())
     }
 
+    pub async fn update_reminder_message(
+        &self,
+        guild_id: i64,
+        member_id: i64,
+        channel_id: i64,
+        message_id: i64,
+    ) -> anyhow::Result<()> {
+        self.db
+            .update_member_reminder_message(guild_id, member_id, channel_id, message_id)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn get_reminder_message(
+        &self,
+        guild_id: i64,
+        member_id: i64,
+    ) -> anyhow::Result<Option<(i64, i64)>> {
+        self.db
+            .select_member_reminder_message(guild_id, member_id)
+            .await
+    }
+
+    pub async fn clear_reminder_message(
+        &self,
+        guild_id: i64,
+        member_id: i64,
+    ) -> anyhow::Result<()> {
+        self.db
+            .clear_member_reminder_message(guild_id, member_id)
+            .await?;
+        Ok(())
+    }
+
     pub async fn update_reminder_opt_out(
         &self,
         guild_id: i64,
@@ -160,6 +200,18 @@ impl GuildRepository {
     ) -> anyhow::Result<()> {
         self.db
             .update_member_reminder_opt_out(guild_id, member_id, is_remind_opt_out, next_remind_at)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn update_manual_reminder_target(
+        &self,
+        guild_id: i64,
+        member_id: i64,
+        now: DateTime<Utc>,
+    ) -> anyhow::Result<()> {
+        self.db
+            .update_member_manual_reminder_target(guild_id, member_id, now)
             .await?;
         Ok(())
     }

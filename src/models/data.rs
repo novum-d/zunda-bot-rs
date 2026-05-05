@@ -11,4 +11,5 @@ pub struct GuildMember {
     pub next_remind_at: Option<DateTime<Utc>>,
     pub remind_count: i32,
     pub is_remind_opt_out: bool,
+    pub reminder_guild_id: Option<i64>,
 }

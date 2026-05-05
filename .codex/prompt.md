@@ -40,6 +40,8 @@ Add the following fields to the user table:
 * next_remind_at: Timestamp | null
 * remind_count: integer
 * is_remind_opt_out: boolean
+* reminder_guild_id: BigInt | null
+* is_admin: boolean
 
 If migration does not exist, CREATE it.
 
@@ -52,6 +54,7 @@ If migration does not exist, CREATE it.
 * src/handler/message.rs (UPDATE)
 * src/handler/interaction.rs (UPDATE)
 * src/db/user.rs or equivalent (UPDATE)
+* src/commands/setup.rs (CREATE/UPDATE)
 
 ---
 
@@ -77,6 +80,8 @@ Conditions:
 * birthday is NULL
 * is_remind_opt_out == false
 * remind_count < 5
+* reminder_guild_id is set
+* guild_id == reminder_guild_id
 * last_active_at within 7 days
 * now >= next_remind_at
 * now - last_reminded_at >= 24h
@@ -103,7 +108,8 @@ async fn send_reminder(user: &User)
 
 Requirements:
 
-* Send message to BOT_CHANNEL_ID
+* Send message to the configured reminder guild
+* Use/create the `ずんだぼっと` text channel
 * Mention user
 * Include `/birth signup`
 * Include stop button
@@ -194,6 +200,37 @@ Behavior:
 * Filter by reminder condition
 * Send reminders sequentially
 * Add 1–3 sec delay between sends
+
+---
+
+### 10. Implement Admin Setup Command
+
+Command:
+
+```
+/setup reminder-channel
+```
+
+Requirements:
+
+* Admin-only command based on the user table/admin column, not Discord server permissions
+* Admin command responses should be ephemeral by default
+* Run only inside a Discord guild
+* If the invoking user is not an admin, return an ephemeral denial message
+* Sync guild/member records before setup when possible
+* Configure the current guild as `reminder_guild_id` for every user currently recorded in the guild
+* Ensure the `ずんだぼっと` text channel exists
+* Users without `reminder_guild_id` must not receive birthday registration reminders
+* Send a start message with a `ユーザーを選ぶのだ` button
+* Button opens a paginated user selection UI
+* Pre-filter displayed users by: birthday missing, active within 7 days, and reminder conditions satisfied
+* Show up to 25 users per page
+* Use a multi-select menu for page users
+* Preserve selected users while paging
+* Include previous/next buttons and an execute button
+* Only the command invoker can operate the UI
+* If another user operates it, return ephemeral `この操作は自分のみ使えるのだ`
+* Execute sends selected reminders sequentially with the existing 1-3 second delay
 
 ---
 

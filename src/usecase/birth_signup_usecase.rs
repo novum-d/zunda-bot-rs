@@ -9,12 +9,17 @@ use std::sync::Arc;
 
 pub struct BirthSignupUsecase {
     guild_repo: GuildRepository,
+    reminder_service: crate::reminder::service::ReminderService,
 }
 
 impl BirthSignupUsecase {
     pub fn new(pool: Arc<PgPool>, http: Arc<Http>) -> anyhow::Result<Self> {
-        let guild_repo = GuildRepository::new(pool, http.clone())?;
-        Ok(BirthSignupUsecase { guild_repo })
+        let guild_repo = GuildRepository::new(pool.clone(), http.clone())?;
+        let reminder_service = crate::reminder::service::ReminderService::new(pool, http)?;
+        Ok(BirthSignupUsecase {
+            guild_repo,
+            reminder_service,
+        })
     }
 
     pub async fn invoke(&self, poise_ctx: Context<'_>) -> anyhow::Result<(), Error> {
@@ -84,6 +89,19 @@ impl BirthSignupUsecase {
             self.guild_repo
                 .update_member_birth(guild_id, member_id, birth?)
                 .await?;
+
+            if let Err(e) = self
+                .reminder_service
+                .delete_saved_reminder_message(guild_id, member_id)
+                .await
+            {
+                tracing::warn!(
+                    guild_id,
+                    member_id,
+                    "failed to delete reminder message after birthday signup: {}",
+                    e
+                );
+            }
 
             // 「誕生日通知の登録が完了したこと」をメッセージで通知
             poise_ctx

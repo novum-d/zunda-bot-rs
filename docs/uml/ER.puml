@@ -23,6 +23,10 @@ entity "guild_member" as member {
   next_remind_at     : TIMESTAMPTZ
   remind_count       : INTEGER
   is_remind_opt_out  : BOOLEAN
+  reminder_guild_id  : BIGINT <<FK>>
+  reminder_channel_id : BIGINT
+  reminder_message_id : BIGINT
+  is_admin           : BOOLEAN
 }
 note right of member::member_id
 Discordユーザーを識別するID
@@ -60,6 +64,27 @@ note right of member::is_remind_opt_out
 誕生日未登録リマインド停止フラグ
 end note
 
+note right of member::reminder_guild_id
+誕生日未登録リマインドを送信するギルドID
+未設定の場合はリマインドを送信しない
+end note
+
+note right of member::reminder_channel_id
+最後に送信した誕生日未登録リマインドのチャンネルID
+誕生日登録時のメッセージ削除に使う
+end note
+
+note right of member::reminder_message_id
+最後に送信した誕生日未登録リマインドのメッセージID
+誕生日登録時のメッセージ削除に使う
+end note
+
+note right of member::is_admin
+管理者コマンドを実行できるユーザーフラグ
+Discordサーバー権限ではなくDB上の値で判定する
+end note
+
 guild ||--o{ member : "ギルドに\n所属するメンバー"
+guild ||--o{ member : "リマインド通知先"
 
 @enduml
