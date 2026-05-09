@@ -208,10 +208,9 @@ impl GuildRepository {
         &self,
         guild_id: i64,
         member_id: i64,
-        now: DateTime<Utc>,
     ) -> anyhow::Result<()> {
         self.db
-            .update_member_manual_reminder_target(guild_id, member_id, now)
+            .update_member_manual_reminder_target(guild_id, member_id)
             .await?;
         Ok(())
     }

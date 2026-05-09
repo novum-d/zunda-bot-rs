@@ -350,49 +350,19 @@ impl ReminderService {
         Ok(candidates)
     }
 
-    pub async fn send_selected_reminders(
+    pub async fn set_selected_reminders(
         &self,
         guild_id: i64,
         selected_member_ids: Vec<i64>,
     ) -> anyhow::Result<usize> {
         let selected_member_ids = selected_member_ids.into_iter().collect::<HashSet<_>>();
-        let now = Utc::now();
         for member_id in &selected_member_ids {
             self.guild_repo
-                .update_manual_reminder_target(guild_id, *member_id, now)
+                .update_manual_reminder_target(guild_id, *member_id)
                 .await?;
         }
 
-        let active_since = now - Duration::days(ACTIVE_WINDOW_DAYS);
-        let users = self
-            .guild_repo
-            .get_active_reminder_candidates(active_since)
-            .await?;
-
-        let mut sent_count = 0;
-        for user in users.into_iter().filter(|user| {
-            user.guild_id == guild_id
-                && selected_member_ids.contains(&user.member_id)
-                && should_send_reminder(user, now)
-        }) {
-            match self.send_due_reminder(&user, now).await {
-                Ok(true) => {
-                    sent_count += 1;
-                    sleep(stagger_delay(&user)).await;
-                }
-                Ok(false) => {}
-                Err(e) => {
-                    tracing::error!(
-                        guild_id = user.guild_id,
-                        member_id = user.member_id,
-                        "Failed to send selected reminder: {}",
-                        e
-                    );
-                }
-            }
-        }
-
-        Ok(sent_count)
+        Ok(selected_member_ids.len())
     }
 
     pub async fn scan_and_send(&self) -> anyhow::Result<usize> {

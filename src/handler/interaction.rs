@@ -161,14 +161,14 @@ async fn handle_reminder_ui_interaction(
                 let reminder_service = data.reminder_service.clone();
                 tokio::spawn(async move {
                     match reminder_service
-                        .send_selected_reminders(guild_id, selected_member_ids)
+                        .set_selected_reminders(guild_id, selected_member_ids)
                         .await
                     {
                         Ok(sent_count) => {
-                            tracing::info!(guild_id, sent_count, "selected reminders sent");
+                            tracing::info!(guild_id, sent_count, "selected reminders set");
                         }
                         Err(e) => {
-                            tracing::error!(guild_id, "selected reminder send failed: {}", e);
+                            tracing::error!(guild_id, "selected reminder set failed: {}", e);
                         }
                     }
                 });

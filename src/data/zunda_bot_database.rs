@@ -267,20 +267,16 @@ impl ZundaBotDatabase {
         &self,
         guild_id: i64,
         member_id: i64,
-        now: DateTime<Utc>,
     ) -> anyhow::Result<()> {
         sqlx::query(
             r#"
         UPDATE guild_member
-        SET reminder_guild_id = $1,
-            last_active_at = $3,
-            next_remind_at = $3
+        SET reminder_guild_id = $1
         WHERE guild_id = $1 AND member_id = $2
         "#,
         )
         .bind(guild_id)
         .bind(member_id)
-        .bind(now)
         .execute(&*self.pool)
         .await?;
         Ok(())
