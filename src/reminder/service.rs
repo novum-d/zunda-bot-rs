@@ -124,6 +124,9 @@ impl ReminderService {
     }
 
     pub async fn send_reminder(&self, user: &User) -> anyhow::Result<()> {
+        let _ = self
+            .delete_saved_reminder_message(user.guild_id, user.member_id)
+            .await;
         let custom_id = stop_button_custom_id(user.guild_id, user.member_id);
         let stop_button = CreateButton::new(custom_id)
             .label("リマインド停止")
