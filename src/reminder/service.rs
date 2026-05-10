@@ -87,16 +87,18 @@ impl ReminderService {
             .await
     }
 
+    async fn ensure_member(&self, guild_id: i64, member_id: i64) -> anyhow::Result<()> {
+        self.guild_repo
+            .add_guild(guild_id, Some(&format!("guild-{guild_id}")))
+            .await?;
+        self.guild_repo.add_member(guild_id, member_id, None).await
+    }
+
     async fn record_member_activity(&self, guild_id: i64, member_id: i64) -> anyhow::Result<()> {
         let now = Utc::now();
         let first_remind_at = now + Duration::days(FIRST_REMIND_DELAY_DAYS);
 
-        self.guild_repo
-            .add_guild(guild_id, Some(&format!("guild-{guild_id}")))
-            .await?;
-        self.guild_repo
-            .add_member(guild_id, member_id, None)
-            .await?;
+        self.ensure_member(guild_id, member_id).await?;
         self.guild_repo
             .update_last_active(guild_id, member_id, now, first_remind_at)
             .await?;
@@ -127,33 +129,48 @@ impl ReminderService {
         let _ = self
             .delete_saved_reminder_message(user.guild_id, user.member_id)
             .await;
-        let custom_id = stop_button_custom_id(user.guild_id, user.member_id);
-        let stop_button = CreateButton::new(custom_id)
-            .label("リマインド停止")
-            .style(ButtonStyle::Danger);
-        let channel_id = self.ensure_bot_channel(user.guild_id).await?;
 
-        let message = channel_id
-            .send_message(
-                &self.http,
-                CreateMessage::new()
-                    .content(format!(
-                        "<@{}>\nまだ誕生日が登録されていないのだ！\nよければ `/birth signup` から登録してほしいのだ！",
-                        user.member_id
-                    ))
-                    .components(vec![CreateActionRow::Buttons(vec![stop_button])]),
-            )
-            .await?;
-        self.guild_repo
-            .update_reminder_message(
-                user.guild_id,
-                user.member_id,
-                i64::from(message.channel_id),
-                i64::from(message.id),
-            )
-            .await?;
+        let channel_ids = self.resolve_reminder_channels(user.guild_id).await?;
+        let custom_id = stop_button_custom_id(user.guild_id, user.member_id);
+        let content = format!(
+            "<@{}>\nまだ誕生日が登録されていないのだ！\nよければ `/birth signup` から登録してほしいのだ！",
+            user.member_id
+        );
+
+        for channel_id in channel_ids {
+            let stop_button = CreateButton::new(&custom_id)
+                .label("リマインド停止")
+                .style(ButtonStyle::Danger);
+            let message = channel_id
+                .send_message(
+                    &self.http,
+                    CreateMessage::new()
+                        .content(&content)
+                        .components(vec![CreateActionRow::Buttons(vec![stop_button])]),
+                )
+                .await?;
+            self.guild_repo
+                .upsert_reminder_message(
+                    user.guild_id,
+                    user.member_id,
+                    i64::from(message.channel_id),
+                    i64::from(message.id),
+                )
+                .await?;
+        }
 
         Ok(())
+    }
+
+    async fn resolve_reminder_channels(&self, guild_id: i64) -> anyhow::Result<Vec<ChannelId>> {
+        let configured = self.guild_repo.get_notification_channels(guild_id).await?;
+        if !configured.is_empty() {
+            return configured
+                .into_iter()
+                .map(|id| u64::try_from(id).map(ChannelId::new).map_err(Into::into))
+                .collect();
+        }
+        Ok(vec![self.ensure_bot_channel(guild_id).await?])
     }
 
     async fn ensure_bot_channel(&self, guild_id: i64) -> anyhow::Result<ChannelId> {
@@ -197,41 +214,52 @@ impl ReminderService {
         guild_id: i64,
         member_id: i64,
     ) -> anyhow::Result<bool> {
-        let Some((channel_id, message_id)) = self
+        let messages = self
             .guild_repo
-            .get_reminder_message(guild_id, member_id)
-            .await?
-        else {
+            .get_reminder_messages(guild_id, member_id)
+            .await?;
+        if messages.is_empty() {
             return Ok(false);
-        };
-
-        let channel_id =
-            ChannelId::new(u64::try_from(channel_id).context("channel id must be positive")?);
-        let message_id =
-            MessageId::new(u64::try_from(message_id).context("message id must be positive")?);
-        channel_id.delete_message(&self.http, message_id).await?;
+        }
+        for (channel_id, message_id) in messages {
+            let channel_id =
+                ChannelId::new(u64::try_from(channel_id).context("channel id must be positive")?);
+            let message_id =
+                MessageId::new(u64::try_from(message_id).context("message id must be positive")?);
+            let _ = channel_id.delete_message(&self.http, message_id).await;
+        }
         self.guild_repo
-            .clear_reminder_message(guild_id, member_id)
+            .clear_reminder_messages(guild_id, member_id)
             .await?;
         Ok(true)
     }
 
+    pub async fn add_notification_channel(
+        &self,
+        guild_id: i64,
+        channel_id: i64,
+    ) -> anyhow::Result<()> {
+        self.guild_repo
+            .add_notification_channel(guild_id, channel_id)
+            .await
+    }
+
+    pub async fn remove_notification_channel(
+        &self,
+        guild_id: i64,
+        channel_id: i64,
+    ) -> anyhow::Result<()> {
+        self.guild_repo
+            .remove_notification_channel(guild_id, channel_id)
+            .await
+    }
+
     pub async fn resume_reminder(&self, guild_id: i64, member_id: i64) -> anyhow::Result<()> {
         let next_remind_at = Utc::now() + Duration::days(FIRST_REMIND_DELAY_DAYS);
-        self.guild_repo
-            .add_guild(guild_id, Some(&format!("guild-{guild_id}")))
-            .await?;
-        self.guild_repo
-            .add_member(guild_id, member_id, None)
-            .await?;
+        self.ensure_member(guild_id, member_id).await?;
         self.guild_repo
             .update_reminder_opt_out(guild_id, member_id, false, Some(next_remind_at))
             .await?;
-        Ok(())
-    }
-
-    pub async fn ensure_reminder_channel(&self, guild_id: i64) -> anyhow::Result<()> {
-        self.ensure_bot_channel(guild_id).await?;
         Ok(())
     }
 
@@ -404,7 +432,7 @@ pub fn should_send_reminder(user: &User, now: DateTime<Utc>) -> bool {
         return false;
     }
 
-    if user.reminder_guild_id != Some(user.guild_id) {
+    if !user.is_reminder_opted_in {
         return false;
     }
 
@@ -541,7 +569,7 @@ mod tests {
             next_remind_at: Some(now()),
             remind_count: 0,
             is_remind_opt_out: false,
-            reminder_guild_id: Some(1),
+            is_reminder_opted_in: true,
         }
     }
 
@@ -583,17 +611,9 @@ mod tests {
     }
 
     #[test]
-    fn should_not_send_when_reminder_guild_is_not_configured() {
+    fn should_not_send_when_not_opted_in() {
         let mut user = user();
-        user.reminder_guild_id = None;
-
-        assert!(!should_send_reminder(&user, now()));
-    }
-
-    #[test]
-    fn should_not_send_when_reminder_guild_is_different() {
-        let mut user = user();
-        user.reminder_guild_id = Some(99);
+        user.is_reminder_opted_in = false;
 
         assert!(!should_send_reminder(&user, now()));
     }

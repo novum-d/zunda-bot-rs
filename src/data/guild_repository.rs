@@ -157,7 +157,7 @@ impl GuildRepository {
         Ok(())
     }
 
-    pub async fn update_reminder_message(
+    pub async fn upsert_reminder_message(
         &self,
         guild_id: i64,
         member_id: i64,
@@ -165,28 +165,28 @@ impl GuildRepository {
         message_id: i64,
     ) -> anyhow::Result<()> {
         self.db
-            .update_member_reminder_message(guild_id, member_id, channel_id, message_id)
+            .upsert_member_reminder_message(guild_id, member_id, channel_id, message_id)
             .await?;
         Ok(())
     }
 
-    pub async fn get_reminder_message(
+    pub async fn get_reminder_messages(
         &self,
         guild_id: i64,
         member_id: i64,
-    ) -> anyhow::Result<Option<(i64, i64)>> {
+    ) -> anyhow::Result<Vec<(i64, i64)>> {
         self.db
-            .select_member_reminder_message(guild_id, member_id)
+            .select_member_reminder_messages(guild_id, member_id)
             .await
     }
 
-    pub async fn clear_reminder_message(
+    pub async fn clear_reminder_messages(
         &self,
         guild_id: i64,
         member_id: i64,
     ) -> anyhow::Result<()> {
         self.db
-            .clear_member_reminder_message(guild_id, member_id)
+            .clear_member_reminder_messages(guild_id, member_id)
             .await?;
         Ok(())
     }
@@ -252,5 +252,29 @@ impl GuildRepository {
     pub async fn fetch_my_guild_ids(&self) -> anyhow::Result<Vec<GuildId>> {
         let guilds = self.http.get_guilds(None, None).await?;
         Ok(guilds.into_iter().map(|g| g.id).collect())
+    }
+
+    pub async fn get_notification_channels(&self, guild_id: i64) -> anyhow::Result<Vec<i64>> {
+        self.db.select_notification_channels(guild_id).await
+    }
+
+    pub async fn add_notification_channel(
+        &self,
+        guild_id: i64,
+        channel_id: i64,
+    ) -> anyhow::Result<()> {
+        self.db
+            .insert_notification_channel(guild_id, channel_id)
+            .await
+    }
+
+    pub async fn remove_notification_channel(
+        &self,
+        guild_id: i64,
+        channel_id: i64,
+    ) -> anyhow::Result<()> {
+        self.db
+            .delete_notification_channel(guild_id, channel_id)
+            .await
     }
 }
