@@ -8,350 +8,285 @@ Before making changes, read:
 - docs/ai/DECISIONS.md
 
 Issue title:
-[🏗️ 雑用] 誕生日未登録ユーザー向けリマインド機能の要件整理
+[👔 ロジック実装] 誕生日未登録ユーザー向けリマインド機能の実装
 
 Issue body:
-## Context
+# Task: Implement Birthday Reminder System (REQUIRED CODE CHANGE)
 
-現在のDiscord botには誕生日登録機能があるが、未登録ユーザーに対するフォローがない状態。
+---
 
-そのため、誕生日未登録ユーザーに対して適切なタイミングでリマインドし、
-登録を促す仕組みを追加したい。
+## ⚠️ Critical Instructions (MUST FOLLOW)
+
+* This task REQUIRES actual code changes
+* You MUST modify or create files under `src/**`
+* If no code changes are made, the task is FAILED
+* If implementation does not exist, CREATE new modules and wire them into the application
+* Do NOT stop at planning or explanation
 
 ---
 
 ## Goal
 
-誕生日未登録ユーザーに対して、Bot専用チャンネルでメンション付きのリマインドを行い、
-登録コマンドへの導線を提供する。
-
-また、過度な通知を防ぐために以下を実現する：
-
-* 段階的なリマインド頻度（指数バックオフ）
-* 初回リマインドの遅延（UX改善）
-* ユーザー単位での通知停止機能
-* 低コスト運用（Cloud Run考慮）
-* スパムにならない通知設計
+Implement a birthday reminder system for users who have not registered their birthday.
 
 ---
 
-## Non-goals
+## Data Model (REQUIRED)
 
-* 誕生日登録機能自体の改修
-* UI（モーダル等）の追加
-* エフェメラルメッセージの導入（※一部例外あり）
-* 大規模サーバー向けの最適化
-
----
-
-## Scope Override
-
-この Issue に限り、以下の変更を許可する：
-
-* ユーザーテーブルへのカラム追加
-* 定期実行処理の追加
-* メッセージイベントハンドリングの拡張
-* Botチャンネル投稿処理の追加
-
----
-
-## Data Model（追加カラム）
-
-ユーザーテーブルに以下を追加する：
+Add the following fields to the user table:
 
 * last_active_at: Timestamp
 * last_reminded_at: Timestamp | null
 * next_remind_at: Timestamp | null
 * remind_count: integer
 * is_remind_opt_out: boolean
+* reminder_guild_id: BigInt | null
+* is_admin: boolean
+
+If migration does not exist, CREATE it.
 
 ---
 
-## Definitions
+## Target Files (YOU MUST MODIFY)
 
-### アクティブユーザー
-
-以下を満たすユーザー：
-
-* 直近7日以内に以下のいずれかを行った
-
-  * メッセージ送信
-  * スラッシュコマンド実行
+* src/reminder/mod.rs (CREATE)
+* src/reminder/service.rs (CREATE)
+* src/handler/message.rs (UPDATE)
+* src/handler/interaction.rs (UPDATE)
+* src/db/user.rs or equivalent (UPDATE)
+* src/commands/setup.rs (CREATE/UPDATE)
 
 ---
 
-## Reminder Logic
+## Implementation Steps (EXECUTE IN ORDER)
 
-### 初回
+### 1. Create Reminder Module
 
-* 初回アクティブ時：
+Create:
 
-  * next_remind_at = last_active_at + 1日
-
----
-
-### バックオフ（前回基準）
-
-* 1回目: 1日後
-* 2回目: 3日後
-* 3回目: 7日後
-* 4回目: 14日後
-* 5回目: 30日後（最終）
-
-※ remind_count >= 5 の場合は送信しない
+* src/reminder/mod.rs
+* src/reminder/service.rs
 
 ---
 
-### 送信条件
+### 2. Implement Reminder Logic
 
-すべて満たす場合のみ送信：
+```rust
+fn should_send_reminder(user: &User, now: DateTime) -> bool
+```
 
-* 誕生日未登録
-* is_remind_opt_out = false
+Conditions:
+
+* birthday is NULL
+* is_remind_opt_out == false
 * remind_count < 5
+* reminder_guild_id is set
+* guild_id == reminder_guild_id
 * last_active_at within 7 days
 * now >= next_remind_at
 * now - last_reminded_at >= 24h
 
 ---
 
-### 送信後更新
+### 3. Implement Backoff Logic
 
-* last_reminded_at 更新
-* remind_count += 1
-* next_remind_at 再計算
+Backoff intervals:
+
+* 1 → 1 day
+* 2 → 3 days
+* 3 → 7 days
+* 4 → 14 days
+* 5 → 30 days
 
 ---
 
-## Notification
+### 4. Implement Reminder Sending
 
-### 投稿仕様
+```rust
+async fn send_reminder(user: &User)
+```
 
-* Bot専用チャンネルに投稿
-* 1ユーザー1投稿（メンション付き）
-* 投稿間に1〜3秒のディレイ
+Requirements:
 
-### メッセージ内容
+* Send message to the configured reminder guild
+* Use/create the `ずんだぼっと` text channel
+* Mention user
+* Include `/birth signup`
+* Include stop button
+
+Message:
 
 まだ誕生日が登録されていないのだ！
 よければ `/birth signup` から登録してほしいのだ！
 
-通知が不要な場合は下のボタンから止められるのだ
+---
+
+### 5. Update State After Sending
+
+```rust
+last_reminded_at = now
+remind_count += 1
+next_remind_at = calculate_next(remind_count)
+```
 
 ---
 
-### トーン
+### 6. Hook Into Message Event
 
-* 「〜のだ」で統一
+In message handler:
 
----
+```rust
+update last_active_at
 
-## Stop / Resume
+if now < next_remind_at:
+    return
 
-### 停止
-
-* ボタン押下：
-
-  * is_remind_opt_out = true
-  * エフェメラル返信：「通知を停止したのだ！」
-  * ボタンは無効化
+if should_send_reminder:
+    send_reminder
+```
 
 ---
 
-### 権限制御
+### 7. Implement Stop Button
 
-* 本人のみ操作可能
-* 他人操作時：
+* Only target user can click
+* If other user:
+  return ephemeral error
 
-  * エフェメラル返信：
-    「この操作は自分のリマインドにのみ使えるのだ」
+On success:
 
----
+```rust
+is_remind_opt_out = true
+```
 
-### 再開
+Response:
 
-* `/birth remind resume`
-
-実行時：
-
-* is_remind_opt_out = false
-
-* next_remind_at = now + 1日
-
-* エフェメラル返信：
-  「リマインドを再開したのだ！」
+通知を停止したのだ！
 
 ---
 
-## Trigger
+### 8. Implement Resume Command
 
-### イベント
+Command:
 
-* メッセージ送信
-* スラッシュコマンド
+```
+/birth remind resume
+```
 
-処理：
+Behavior:
 
-* last_active_at 更新
-* if now < next_remind_at → return
-* 条件満たせば送信
+```rust
+is_remind_opt_out = false
+next_remind_at = now + 1 day
+```
 
----
+Response:
 
-### スキャン
-
-* 7日に1回
-* last_active_at within 7 days
-
----
-
-## Performance
-
-* next_remind_at による early return
-* 短期 in-memory cache
+リマインドを再開したのだ！
 
 ---
 
-## Scheduled Execution (GCP)
+### 9. Implement Scheduled Scan Endpoint
 
-定期スキャンは GCP Cloud Scheduler を使用して実行する。
+Create:
 
-### 構成
+```
+POST /internal/reminder/scan
+```
 
-- Cloud Scheduler から HTTP リクエストで Cloud Run を起動
-- 専用エンドポイントを用意する（例：`/internal/reminder/scan`）
+Behavior:
 
----
-
-### 実行仕様
-
-- 実行頻度：7日に1回
-- HTTP Method: POST
-- 認証：
-  - 内部利用のみ（認証ヘッダ or IAM を使用）
-  - 外部から直接実行できないようにする
+* Fetch users with last_active_at within 7 days
+* Filter by reminder condition
+* Send reminders sequentially
+* Add 1–3 sec delay between sends
 
 ---
 
-### エンドポイント仕様
+### 10. Implement Admin Setup Command
 
-- `/internal/reminder/scan`
+Command:
 
-処理内容：
+```
+/setup reminder-channel
+```
 
-- アクティブユーザー（7日以内）を取得
-- リマインド条件を満たすユーザーを抽出
-- 順次リマインド送信（ディレイあり）
+Requirements:
+
+* Admin-only command based on the user table/admin column, not Discord server permissions
+* Admin command responses should be ephemeral by default
+* Run only inside a Discord guild
+* If the invoking user is not an admin, return an ephemeral denial message
+* Sync guild/member records before setup when possible
+* Configure the current guild as `reminder_guild_id` for every user currently recorded in the guild
+* Ensure the `ずんだぼっと` text channel exists
+* Users without `reminder_guild_id` must not receive birthday registration reminders
+* Send a start message with a `ユーザーを選ぶのだ` button
+* Button opens a paginated user selection UI
+* Pre-filter displayed users by: birthday missing, active within 7 days, and reminder conditions satisfied
+* Show up to 25 users per page
+* Use a multi-select menu for page users
+* Preserve selected users while paging
+* Include previous/next buttons and an execute button
+* Only the command invoker can operate the UI
+* If another user operates it, return ephemeral `この操作は自分のみ使えるのだ`
+* Execute sends selected reminders sequentially with the existing 1-3 second delay
 
 ---
 
-### 制約
+## Constraints
 
-- スキャン処理は**冪等であること**
-  - 同じリクエストが複数回実行されても問題ない設計
-- next_remind_at によって重複送信を防ぐ
-
----
-
-### 注意
-
-- アプリ内部で cron は使用しない
-- スケジューリングは Cloud Scheduler に完全委譲する
+* Do NOT implement cron inside app
+* Assume Cloud Scheduler triggers this endpoint
+* Ensure idempotency (no duplicate sends)
 
 ---
 
-## Channel
-
-環境変数：
+## Environment Variable
 
 ```
 BOT_CHANNEL_ID
 ```
 
-セットアップ：
+---
 
-1. 「ずんだぼっと」チャンネル作成
-2. ID取得
-3. 環境変数設定
+## Safety Requirements
+
+* Do not send multiple reminders within 24h
+* Stop after 5 reminders
+* Prevent spam with delay
 
 ---
 
-## Safety
+## Verification (MUST PASS)
 
-* 24時間以内の再送禁止
-* 再起動でスパム発生しない
-* スパム的投稿を防ぐ（ディレイ）
-
----
-
-## Implementation Guide
-
-以下の順序で実装すること：
-
-1. DB migration追加
-2. Userモデル更新
-3. アクティブ更新処理追加
-4. リマインド判定ロジック実装
-5. 投稿処理実装（ボタン付き）
-6. ボタンハンドラ実装
-7. resumeコマンド追加
-8. 定期スキャン処理追加
+* User sends message → reminder scheduled
+* Reminder is sent after delay
+* Stops after 5 times
+* Stop button works (only self)
+* Resume works (no immediate send)
+* Multiple users do not spam
 
 ---
 
-## Expected Touch Points
+## Output Requirements
 
-* メッセージイベントハンドラ
-* スラッシュコマンドハンドラ
-* DBアクセス層
-* 投稿処理
-* ボタンinteraction処理
-* スケジューラ
+* MUST modify or create files
+* MUST produce a valid diff
+* MUST compile
+* MUST pass tests
 
 ---
 
-## Verification
+## Definition of Done
 
-以下を確認：
-
-1. 未登録ユーザーが発言
-   → 1日後に通知
-
-2. 5回で停止
-
-3. 停止ボタン
-   → 通知されなくなる
-
-4. resume実行
-   → 再開（即時送信されない）
-
-5. 複数ユーザー
-   → スパムにならない
-
----
-
-## Acceptance Criteria
-
-* [ ] 未登録ユーザー判定ができる
-* [ ] アクティブ条件が正しく動作
-* [ ] リマインド送信される
-* [ ] 5回で停止
-* [ ] 停止・再開が動作
-* [ ] 他人操作不可
-* [ ] スパムにならない
-* [ ] 既存機能に影響なし
-* [ ] `cargo fmt` / `clippy` / `test` が通る
-
----
-
-## Notes
-
-* 通知は通常メッセージ
-* スキャンは補助、イベントがメイン
+* Reminder logic works end-to-end
+* No duplicate notifications
+* No CI failure (diff exists)
 
 
 Detected issue kind:
-chore
+logic
 
 Rules:
 - Follow AGENTS.md
@@ -362,6 +297,7 @@ Rules:
 - If repository policy blocks the required code path, stop and report the blocked path clearly
 - Do not touch workflows, deploy, infra, or secrets unless the issue explicitly allows it
 - Write PR title and body in Japanese
-- Run cargo fmt --check, cargo clippy --all-targets --all-features -- -D warnings, cargo test
+- Run cargo fmt --check, cargo clippy --all-targets --all-features -- -D warnings, cargo test when possible
+- If fmt, clippy, or test fails, record the failure and continue
 - Stop if approval is required
 - Keep changes focused on the issue only
