@@ -82,6 +82,7 @@ impl GuildUpdateUsecase {
             member_id,
             birth: _,
             last_notified: _,
+            ..
         } in rows
         {
             member_ids_map_by_guild

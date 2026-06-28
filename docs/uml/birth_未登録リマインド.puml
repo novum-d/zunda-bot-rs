@@ -1,0 +1,114 @@
+@startuml
+title 誕生日未登録リマインド処理フロー
+
+' --- 前提となる仕様 ----------------------
+' - BotユーザーとDMのアクティビティは記録しない
+' - リマインド対象は誕生日未登録、停止していない、送信回数5回未満のメンバー
+' - アクティブ判定は直近7日以内のメッセージまたはリアクションで行う
+' - 同一メンバーへの送信間隔は24時間以上空ける
+' ---------------------------------------
+
+start
+
+fork
+partition "メッセージ/リアクションによるアクティブ記録" {
+  :Discord Gatewayイベントを受信;
+  if (Botユーザー または DMイベント) is (はい) then
+    :処理を終了;
+  else (いいえ)
+  endif
+
+  :guildテーブルへ対象ギルドを追加（未登録時のみ）;
+  :guild_memberテーブルへ対象メンバーを追加（未登録時のみ）;
+  :last_active_atを現在日時に更新;
+  :next_remind_atがNULLの場合は現在日時+1日に更新;
+
+  :対象メンバーのリマインド候補を取得;
+  if (送信条件を満たす) is (はい) then
+    :ずんだぼっとチャンネルを取得または作成;
+    :リマインド停止ボタン付きメッセージを送信;
+    :reminder_channel_idとreminder_message_idを保存;
+    :last_reminded_at、next_remind_at、remind_countを更新;
+  else (いいえ)
+    :送信せず終了;
+  endif
+}
+
+fork again
+partition "内部スキャンAPIによる送信" {
+  :POST /internal/reminder/scan を受信;
+  if (ReminderServiceが無効) is (はい) then
+    :503 JSONを返す;
+    detach
+  else (いいえ)
+  endif
+
+  :直近7日以内にアクティブなリマインド候補を取得;
+  while (次の候補が存在)
+    if (送信条件を満たす) is (はい) then
+      :ずんだぼっとチャンネルを取得または作成;
+      :リマインド停止ボタン付きメッセージを送信;
+      :reminder_channel_idとreminder_message_idを保存;
+      :last_reminded_at、next_remind_at、remind_countを更新;
+      :1〜3秒待機して送信を分散;
+    else (いいえ)
+      :送信しない;
+    endif
+  endwhile
+  :送信件数をJSONで返す;
+}
+
+fork again
+partition "リマインド停止ボタン" {
+  :停止ボタンinteractionを受信;
+  if (押下ユーザーが対象メンバーではない) is (はい) then
+    :対象ユーザーだけが停止できることをephemeralで通知;
+    detach
+  else (いいえ)
+  endif
+
+  :ephemeral応答をdefer;
+  :is_remind_opt_outをtrueに更新;
+  :保存済みリマインドメッセージを削除;
+  if (保存済みメッセージがない) is (はい) then
+    :現在のinteractionメッセージを削除;
+  else (いいえ)
+  endif
+  :停止結果をephemeralで通知;
+}
+
+fork again
+partition "管理者セットアップ" {
+  :/setup reminder-channel を受信;
+  if (ギルド外で実行された) is (はい) then
+    :サーバー内実行が必要なことをephemeralで通知;
+    detach
+  else (いいえ)
+  endif
+
+  :実行ユーザーのis_adminを確認;
+  if (管理者ではない) is (はい) then
+    :権限がないことをephemeralで通知;
+    detach
+  else (いいえ)
+  endif
+
+  :ephemeral応答をdefer;
+  :ギルド同期処理を実行（失敗しても継続）;
+  :ずんだぼっとチャンネルを取得または作成;
+  :選択セッションを作成;
+  :候補選択開始ボタンをephemeralで表示;
+
+  :管理者が選択UIを操作;
+  :誕生日未登録候補を最大25件ずつ表示;
+  :選択状態をセッションに保存;
+  :実行ボタン押下で選択済みメンバーを取得;
+  :選択済みメンバーのreminder_guild_id、last_active_at、next_remind_atを更新;
+  :バックグラウンドで選択済みメンバーへリマインドを送信;
+}
+
+end fork
+
+stop
+
+@enduml

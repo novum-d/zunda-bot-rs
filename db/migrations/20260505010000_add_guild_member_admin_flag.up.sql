@@ -1,0 +1,2 @@
+ALTER TABLE guild_member
+    ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT FALSE;

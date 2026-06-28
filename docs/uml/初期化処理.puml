@@ -2,6 +2,39 @@
 title 初期化処理フロー
 start
 
+:環境変数とログ設定を読み込む;
+
+if (ENABLE_DISCORD_BOT == "false") is (はい) then
+  :Passive healthcheck serverを起動;
+  :通常のhealthcheckのみ応答する;
+  stop
+else (いいえ)
+endif
+
+:DATABASE_URLでPostgreSQLへ接続;
+:マイグレーションを実行;
+:DISCORD_TOKENを読み込む;
+:Gateway Intentsを設定;
+note right
+  GUILD_MEMBERS、GUILD_MESSAGES、
+  GUILD_MESSAGE_REACTIONS、
+  DIRECT_MESSAGES、MESSAGE_CONTENTを利用する。
+end note
+
+:slash commandを登録;
+note right
+  hello、birth、setupを登録する。
+  birthはlist/signup/reset/remind resumeを持つ。
+end note
+
+:Discordイベントハンドラを設定;
+note right
+  MessageとReactionAddでアクティブ日時を記録する。
+  Component interactionでリマインド停止と選択UIを処理する。
+end note
+
+:各UsecaseとReminderServiceを初期化;
+
 ' 初期更新処理
 
 ' --- ギルド情報取得 -------------------------
@@ -66,6 +99,17 @@ endwhile
 
 }
 ' ----------------------------------------------------
+
+:誕生日プッシュ通知ワーカーを起動;
+:Healthcheck serverを起動;
+note right
+  通常のhealthcheckに加えて
+  POST /internal/reminder/scan で
+  誕生日未登録リマインドのスキャンを実行できる。
+end note
+
+:グローバルslash commandをDiscordへ登録;
+:Discord Gateway clientを開始;
 
 stop
 

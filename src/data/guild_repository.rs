@@ -2,11 +2,12 @@ use crate::data::zunda_bot_database::ZundaBotDatabase;
 use crate::models::common::Context;
 use crate::models::data::GuildMember;
 use crate::models::domain::{MyGuild, MyGuildMember};
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use poise::serenity_prelude::{GuildId, Http};
 use sqlx::PgPool;
 use std::sync::Arc;
 
+#[derive(Clone)]
 pub struct GuildRepository {
     db: ZundaBotDatabase,
     http: Arc<Http>,
@@ -69,6 +70,10 @@ impl GuildRepository {
         Ok(member.and_then(|m| m.birth))
     }
 
+    pub async fn is_admin_member(&self, member_id: i64) -> anyhow::Result<bool> {
+        self.db.select_member_is_admin(member_id).await
+    }
+
     pub async fn update_member_birth(
         &self,
         guild_id: i64,
@@ -103,6 +108,109 @@ impl GuildRepository {
     ) -> anyhow::Result<()> {
         self.db
             .update_guild_member_last_notified(guild_id, member_id, last_notified)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn update_last_active(
+        &self,
+        guild_id: i64,
+        member_id: i64,
+        now: DateTime<Utc>,
+        first_remind_at: DateTime<Utc>,
+    ) -> anyhow::Result<()> {
+        self.db
+            .update_member_last_active(guild_id, member_id, now, first_remind_at)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn get_active_reminder_candidates(
+        &self,
+        active_since: DateTime<Utc>,
+    ) -> anyhow::Result<Vec<GuildMember>> {
+        self.db
+            .select_active_reminder_candidates(active_since)
+            .await
+    }
+
+    pub async fn get_active_reminder_candidate(
+        &self,
+        member_id: i64,
+        active_since: DateTime<Utc>,
+    ) -> anyhow::Result<Option<GuildMember>> {
+        self.db
+            .select_active_reminder_candidate_by_member_id(member_id, active_since)
+            .await
+    }
+
+    pub async fn update_reminder_sent(
+        &self,
+        guild_id: i64,
+        member_id: i64,
+        now: DateTime<Utc>,
+        next_remind_at: DateTime<Utc>,
+    ) -> anyhow::Result<()> {
+        self.db
+            .update_member_reminder_sent(guild_id, member_id, now, next_remind_at)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn upsert_reminder_message(
+        &self,
+        guild_id: i64,
+        member_id: i64,
+        channel_id: i64,
+        message_id: i64,
+    ) -> anyhow::Result<()> {
+        self.db
+            .upsert_member_reminder_message(guild_id, member_id, channel_id, message_id)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn get_reminder_messages(
+        &self,
+        guild_id: i64,
+        member_id: i64,
+    ) -> anyhow::Result<Vec<(i64, i64)>> {
+        self.db
+            .select_member_reminder_messages(guild_id, member_id)
+            .await
+    }
+
+    pub async fn clear_reminder_messages(
+        &self,
+        guild_id: i64,
+        member_id: i64,
+    ) -> anyhow::Result<()> {
+        self.db
+            .clear_member_reminder_messages(guild_id, member_id)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn update_reminder_opt_out(
+        &self,
+        guild_id: i64,
+        member_id: i64,
+        is_remind_opt_out: bool,
+        next_remind_at: Option<DateTime<Utc>>,
+    ) -> anyhow::Result<()> {
+        self.db
+            .update_member_reminder_opt_out(guild_id, member_id, is_remind_opt_out, next_remind_at)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn update_manual_reminder_target(
+        &self,
+        guild_id: i64,
+        member_id: i64,
+    ) -> anyhow::Result<()> {
+        self.db
+            .update_member_manual_reminder_target(guild_id, member_id)
             .await?;
         Ok(())
     }
@@ -144,5 +252,29 @@ impl GuildRepository {
     pub async fn fetch_my_guild_ids(&self) -> anyhow::Result<Vec<GuildId>> {
         let guilds = self.http.get_guilds(None, None).await?;
         Ok(guilds.into_iter().map(|g| g.id).collect())
+    }
+
+    pub async fn get_notification_channels(&self, guild_id: i64) -> anyhow::Result<Vec<i64>> {
+        self.db.select_notification_channels(guild_id).await
+    }
+
+    pub async fn add_notification_channel(
+        &self,
+        guild_id: i64,
+        channel_id: i64,
+    ) -> anyhow::Result<()> {
+        self.db
+            .insert_notification_channel(guild_id, channel_id)
+            .await
+    }
+
+    pub async fn remove_notification_channel(
+        &self,
+        guild_id: i64,
+        channel_id: i64,
+    ) -> anyhow::Result<()> {
+        self.db
+            .delete_notification_channel(guild_id, channel_id)
+            .await
     }
 }
