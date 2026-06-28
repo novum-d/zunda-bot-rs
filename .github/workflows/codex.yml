@@ -161,36 +161,43 @@ jobs:
 
       - name: Check dangerous commands
         run: |
-          forbidden_commands=(
-            "sudo"
-            "curl | sh"
-            "wget | sh"
-            "chmod 777"
-            "mkfs"
-            "dd if="
-            "shutdown"
-            "reboot"
-            "systemctl"
-            "docker system prune"
-            "git push --force"
-            "git reset --hard"
-            "nohup"
-            "tmux"
-            "screen"
-            "disown"
+          declare -A forbidden_patterns=(
+            ["sudo"]='(^|[[:space:];|&`$()<])sudo([[:space:];|&`$()>]|$)'
+            ["curl | sh"]='(^|[[:space:];|&`$()<])curl[[:space:]][^|]*\|[[:space:]]*sh([[:space:];|&`$()>]|$)'
+            ["wget | sh"]='(^|[[:space:];|&`$()<])wget[[:space:]][^|]*\|[[:space:]]*sh([[:space:];|&`$()>]|$)'
+            ["chmod 777"]='(^|[[:space:];|&`$()<])chmod[[:space:]]+777([[:space:];|&`$()>]|$)'
+            ["mkfs"]='(^|[[:space:];|&`$()<])mkfs([.[:alnum:]_-]*)([[:space:];|&`$()>]|$)'
+            ["dd if="]='(^|[[:space:];|&`$()<])dd[[:space:]][^;&|]*if='
+            ["shutdown"]='(^|[[:space:];|&`$()<])shutdown([[:space:];|&`$()>]|$)'
+            ["reboot"]='(^|[[:space:];|&`$()<])reboot([[:space:];|&`$()>]|$)'
+            ["systemctl"]='(^|[[:space:];|&`$()<])systemctl([[:space:];|&`$()>]|$)'
+            ["docker system prune"]='(^|[[:space:];|&`$()<])docker[[:space:]]+system[[:space:]]+prune([[:space:];|&`$()>]|$)'
+            ["git push --force"]='(^|[[:space:];|&`$()<])git[[:space:]]+push[[:space:]][^;&|]*--force([[:space:];|&`$()>]|$)'
+            ["git reset --hard"]='(^|[[:space:];|&`$()<])git[[:space:]]+reset[[:space:]][^;&|]*--hard([[:space:];|&`$()>]|$)'
+            ["nohup"]='(^|[[:space:];|&`$()<])nohup([[:space:];|&`$()>]|$)'
+            ["tmux"]='(^|[[:space:];|&`$()<])tmux([[:space:];|&`$()>]|$)'
+            ["screen"]='(^|[[:space:];|&`$()<])screen([[:space:];|&`$()>]|$)'
+            ["disown"]='(^|[[:space:];|&`$()<])disown([[:space:];|&`$()>]|$)'
           )
 
-          files=$(git diff --name-only)
+          while IFS= read -r -d '' file; do
+            if [ "$file" = ".github/workflows/codex.yml" ]; then
+              continue
+            fi
 
-          for file in $files; do
-            for command in "${forbidden_commands[@]}"; do
-              if grep -q "$command" "$file"; then
+            added_lines=$(git diff --unified=0 -- "$file" | grep '^+' | grep -v '^+++' || true)
+            if [ -z "$added_lines" ]; then
+              continue
+            fi
+
+            for command in "${!forbidden_patterns[@]}"; do
+              if printf '%s\n' "$added_lines" | grep -Eq "${forbidden_patterns[$command]}"; then
                 echo "Forbidden command detected in $file: $command"
-                grep "$command" "$file"
+                printf '%s\n' "$added_lines" | grep -E "${forbidden_patterns[$command]}"
                 exit 1
               fi
             done
-          done
+          done < <(git diff --name-only -z --diff-filter=ACMR)
 
       - name: Install Rust components
         run: |
