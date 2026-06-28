@@ -234,8 +234,8 @@ crate 分割、DB 導入、Docker 導入、デプロイ自動化は承認必須�
 ## Dependency Rules
 
 * Reuse existing crates whenever possible
-* Avoid adding new dependencies
-* Any new dependency requires human approval
+* Keep new dependencies minimal when they are necessary for the requested implementation
+* Avoid broad dependency upgrades
 * Prefer standard library solutions first
 
 <!--
@@ -296,7 +296,6 @@ Issue 番号、変更内容、テスト結果を含める。
 Codex must immediately stop if:
 
 * A forbidden path would be modified
-* A new dependency is required
 * More than 10 files would change
 * More than 300 lines would be added
 * The issue scope becomes unclear

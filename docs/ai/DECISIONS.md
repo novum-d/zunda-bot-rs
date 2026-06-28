@@ -23,12 +23,13 @@ Prefer using:
 * Rust standard library
 * Small utility functions over introducing new libraries
 
-Any new dependency requires explicit human approval.
+New dependencies are allowed when they are necessary for the requested implementation, but they must stay minimal and be
+explained in the PR. Broad dependency upgrades should be avoided.
 
 <!--
 小さな機能のために依存を増やさない。
 まず既存 crate と標準ライブラリを使う。
-新しい依存追加は人間承認必須。
+必要な依存追加は最小限にし、PR に理由を記載する。
 -->
 
 ---

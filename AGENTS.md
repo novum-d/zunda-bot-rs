@@ -48,6 +48,8 @@ Codex may only modify the following paths unless explicitly allowed in the issue
 * tests/**
 * README.md
 * docs/**
+* Cargo.toml
+* Cargo.lock
 
 <!--
 Issue に明示されていない限り、上記以外のパスは変更してはいけない。
@@ -73,8 +75,6 @@ Codex must never modify:
 * secrets/**
 * .env
 * .env.*
-* Cargo.toml
-* Cargo.lock
 * Dockerfile
 * docker-compose.yml
 * release scripts
@@ -93,9 +93,6 @@ Any attempt to modify forbidden files must fail immediately.
 
 The following changes always require explicit human approval:
 
-* Cargo.toml changes
-* Cargo.lock changes
-* New dependencies
 * GitHub Actions workflow changes
 * Deployment changes
 * Infrastructure changes
@@ -106,6 +103,15 @@ The following changes always require explicit human approval:
 <!--
 以下は必ず人間の承認が必要。
 自動で進めてはいけない。
+-->
+
+Cargo.toml / Cargo.lock changes, including adding dependencies, are allowed when they are necessary to complete the
+requested implementation. Codex must keep dependency changes minimal, avoid broad upgrades, and explain the reason in the
+PR.
+
+<!--
+Cargo.toml / Cargo.lock の変更と依存追加は、依頼された実装に必要な場合は許可する。
+ただし最小限にし、広範なアップグレードを避け、PR に理由を記載する。
 -->
 
 ---

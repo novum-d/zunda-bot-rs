@@ -31,13 +31,14 @@ unwrap は既存実装に合わせる。
 
 ## Dependencies
 
-* Avoid adding new dependencies
 * Reuse existing crates where possible
-* Any new dependency requires human approval
+* Keep new dependencies minimal when they are necessary for the requested implementation
+* Avoid broad dependency upgrades
+* Explain dependency additions in the PR
 
 <!--
-依存追加は禁止寄り。
 既存 crate を優先する。
+必要な依存追加は最小限にする。
 -->
 
 ## Logging
