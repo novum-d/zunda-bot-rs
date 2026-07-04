@@ -118,11 +118,14 @@ jobs:
           sandbox: workspace-write
           safety-strategy: drop-sudo
 
+      - name: Restore generated Codex prompt
+        run: git checkout -- .codex/prompt.md
+
       # 差分の取り方を修正（誤検知防止）
       - name: Get changed files
         id: changes
         run: |
-          changed_files=$(git diff --name-only)
+          changed_files=$(git diff --name-only -- . ':(exclude).codex')
           echo "files<<EOF" >> $GITHUB_OUTPUT
           echo "$changed_files" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
@@ -205,6 +208,7 @@ jobs:
           rustup component add clippy
 
       - name: Format check
+        id: fmt
         continue-on-error: true
         run: cargo fmt --check
 
@@ -228,11 +232,15 @@ jobs:
             fi
           fi
 
-      - name: Run checks
+      - name: Clippy
+        id: clippy
         continue-on-error: true
-        run: |
-          cargo clippy --all-targets --all-features -- -D warnings
-          cargo test
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Test
+        id: test
+        continue-on-error: true
+        run: cargo test
 
       # 差分がない場合はPRを作らない
       - name: Check if changes exist
@@ -244,32 +252,58 @@ jobs:
             echo "no_changes=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: Build Pull Request metadata
+        id: pr_metadata
+        if: steps.diffcheck.outputs.no_changes == 'false'
+        run: |
+          issue_title=$(printf '%s\n' "${{ github.event.issue.title }}")
+          safe_title=$(printf '%s\n' "$issue_title" | sed -E 's/^\[[^]]+\][[:space:]]*//')
+          if [ -z "$safe_title" ]; then
+            safe_title="Issue #${{ github.event.issue.number }} の対応"
+          fi
+
+          changed_files=$(git diff --name-only -- . ':(exclude).codex')
+          {
+            echo "title<<EOF"
+            echo "$safe_title"
+            echo "EOF"
+            echo "changed_files<<EOF"
+            printf '%s\n' "$changed_files" | sed '/^$/d; s/^/- /'
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Create Pull Request
         if: steps.diffcheck.outputs.no_changes == 'false'
         uses: peter-evans/create-pull-request@v8.1.1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "${{ steps.issue_type.outputs.kind == 'chore' && format('Issue #{0} の雑用対応', github.event.issue.number) || steps.issue_type.outputs.kind == 'later' && format('Issue #{0} の保留タスク整理', github.event.issue.number) || format('Issue #{0} の実装対応', github.event.issue.number) }}"
-          title: "${{ steps.issue_type.outputs.kind == 'chore' && format('Issue #{0} の雑用対応', github.event.issue.number) || steps.issue_type.outputs.kind == 'later' && format('Issue #{0} の保留タスク整理', github.event.issue.number) || format('Issue #{0} の実装対応', github.event.issue.number) }}"
+          commit-message: "${{ steps.issue_type.outputs.kind == 'chore' && format('🏗️ chore: Issue #{0} の雑用対応', github.event.issue.number) || steps.issue_type.outputs.kind == 'later' && format('🏗️ chore: Issue #{0} の保留タスク整理', github.event.issue.number) || steps.issue_type.outputs.kind == 'bug' && format('🐛 fix: Issue #{0} の不具合を修正', github.event.issue.number) || format('✨ feat: Issue #{0} の実装対応', github.event.issue.number) }}"
+          title: "${{ steps.pr_metadata.outputs.title }}"
           body: |
             ## 概要
-            - Issue #${{ github.event.issue.number }} の${{ steps.issue_type.outputs.kind == 'chore' && '雑用対応' || steps.issue_type.outputs.kind == 'later' && '保留タスク整理' || '実装対応' }}
+            - Issue #${{ github.event.issue.number }}: ${{ github.event.issue.title }}
             - 種別: `${{ steps.issue_type.outputs.kind }}`
 
-            ## 変更内容
-            - ${{ steps.issue_type.outputs.kind == 'chore' && 'Codex により雑用・運用系変更を実施' || steps.issue_type.outputs.kind == 'later' && 'Codex により保留タスクの整理を実施' || 'Codex により実装を実施' }}
+            ## 作業内容
+            - Codex により Issue の要件に沿った変更を実施
+
+            ## 作業意図
+            - Issue #${{ github.event.issue.number }} の目的を満たすため
 
             ## 変更ファイル
-            - 差分を確認してください
+            ${{ steps.pr_metadata.outputs.changed_files }}
 
             ## テスト結果
-            - cargo fmt --check
-            - cargo clippy --all-targets --all-features -- -D warnings
-            - cargo test
+            - cargo fmt --check: ${{ steps.fmt.outcome }}
+            - cargo clippy --all-targets --all-features -- -D warnings: ${{ steps.clippy.outcome }}
+            - cargo test: ${{ steps.test.outcome }}
+
+            ## 手動で次にするべき作業
+            - レビュアーが差分とテスト結果を確認する
 
             ## 制限事項
-            - fmt / clippy / test が失敗していても、この workflow は警告扱いで継続する
-            - 自動生成された要約のため、必要に応じて人手で補足してください
+            - PR 本文は workflow による自動生成のため、詳細な補足が必要な場合は人手で追記してください
+            - fmt / clippy / test が failure の場合も、この workflow は結果を記録して Draft PR を作成します
           draft: true
           branch: codex/issue-${{ github.event.issue.number }}
 
