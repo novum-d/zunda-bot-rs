@@ -8,77 +8,285 @@ Before making changes, read:
 - docs/ai/DECISIONS.md
 
 Issue title:
-Discord Interaction Webhook の入口と署名検証を追加する
+[👔 ロジック実装] 誕生日未登録ユーザー向けリマインド機能の実装
 
 Issue body:
-## Context
+# Task: Implement Birthday Reminder System (REQUIRED CODE CHANGE)
 
-Discord Gateway ではなく Discord Interactions Endpoint URL で slash command / interaction を受けるための HTTP 入口を追加する。
+---
 
-現在は `src/main.rs` で serenity/poise の Gateway client を起動し、`src/services/healthcheck.rs` の HTTP サーバは healthcheck と `POST /internal/reminder/scan` のみを扱っている。
+## ⚠️ Critical Instructions (MUST FOLLOW)
 
-Discord 公式仕様上、Interactions Endpoint URL には以下が必須。
+* This task REQUIRES actual code changes
+* You MUST modify or create files under `src/**`
+* If no code changes are made, the task is FAILED
+* If implementation does not exist, CREATE new modules and wire them into the application
+* Do NOT stop at planning or explanation
 
-* `POST /interactions` で `type: 1` の PING を受け、`{"type":1}` を返す
-* `X-Signature-Ed25519` と `X-Signature-Timestamp` を使って Discord 署名を検証する
-
-独自認証は追加しないが、Discord 署名検証は必須要件として実装する。
+---
 
 ## Goal
 
-Cloud Run 上で Discord Interaction webhook を受信できる最小の HTTP endpoint を追加し、Discord Developer Portal に Interactions Endpoint URL として登録できる状態にする。
+Implement a birthday reminder system for users who have not registered their birthday.
 
-## Task Type
+---
 
-- [x] Implementation
-- [ ] Maintenance / Docs
+## Data Model (REQUIRED)
 
-## Non-goals
+Add the following fields to the user table:
 
-今回やらないこと
+* last_active_at: Timestamp
+* last_reminded_at: Timestamp | null
+* next_remind_at: Timestamp | null
+* remind_count: integer
+* is_remind_opt_out: boolean
+* reminder_guild_id: BigInt | null
+* is_admin: boolean
 
-* 既存 slash command の実行移植
-* Gateway の削除
-* Cloud Run / Cloud Scheduler / GitHub Actions / deploy 設定の変更
-* message create / reaction event の webhook 対応
-* 独自認証や追加の API key 認証
+If migration does not exist, CREATE it.
 
-## Files or directories allowed to change
+---
 
-* src/services/
-* src/models/
-* tests/
-* README.md
-* docs/
-* Cargo.toml
-* Cargo.lock
+## Target Files (YOU MUST MODIFY)
 
-## Acceptance Criteria
+* src/reminder/mod.rs (CREATE)
+* src/reminder/service.rs (CREATE)
+* src/handler/message.rs (UPDATE)
+* src/handler/interaction.rs (UPDATE)
+* src/db/user.rs or equivalent (UPDATE)
+* src/commands/setup.rs (CREATE/UPDATE)
 
-* [ ] `POST /interactions` が HTTP で受けられる
-* [ ] Discord PING interaction `{"type":1}` に `200` と `{"type":1}` を返す
-* [ ] `X-Signature-Ed25519` / `X-Signature-Timestamp` / raw body による署名検証を行う
-* [ ] 署名が不正な場合は `401` を返す
-* [ ] 未対応 interaction type は既存処理を壊さず、明示的なエラーまたは未対応応答を返す
-* [ ] 既存の `GET /` healthcheck と `POST /internal/reminder/scan` を壊さない
-* [ ] 必要な依存追加がある場合は最小限にし、PR に理由を書く
-* [ ] cargo fmt --check が通る
-* [ ] cargo clippy --all-targets --all-features -- -D warnings が通る
-* [ ] cargo test が通る
-* [ ] 既存機能を壊さない
-* [ ] README が必要なら更新される
-* [ ] 実装依頼の場合、`.codex` やドキュメントだけで完了扱いにしない
-* [ ] 実装依頼の場合、`src/**` または `tests/**` に関連差分が入る
+---
 
-## Similar existing implementation
+## Implementation Steps (EXECUTE IN ORDER)
 
-* src/services/healthcheck.rs
-* src/main.rs
+### 1. Create Reminder Module
 
+Create:
+
+* src/reminder/mod.rs
+* src/reminder/service.rs
+
+---
+
+### 2. Implement Reminder Logic
+
+```rust
+fn should_send_reminder(user: &User, now: DateTime) -> bool
+```
+
+Conditions:
+
+* birthday is NULL
+* is_remind_opt_out == false
+* remind_count < 5
+* reminder_guild_id is set
+* guild_id == reminder_guild_id
+* last_active_at within 7 days
+* now >= next_remind_at
+* now - last_reminded_at >= 24h
+
+---
+
+### 3. Implement Backoff Logic
+
+Backoff intervals:
+
+* 1 → 1 day
+* 2 → 3 days
+* 3 → 7 days
+* 4 → 14 days
+* 5 → 30 days
+
+---
+
+### 4. Implement Reminder Sending
+
+```rust
+async fn send_reminder(user: &User)
+```
+
+Requirements:
+
+* Send message to the configured reminder guild
+* Use/create the `ずんだぼっと` text channel
+* Mention user
+* Include `/birth signup`
+* Include stop button
+
+Message:
+
+まだ誕生日が登録されていないのだ！
+よければ `/birth signup` から登録してほしいのだ！
+
+---
+
+### 5. Update State After Sending
+
+```rust
+last_reminded_at = now
+remind_count += 1
+next_remind_at = calculate_next(remind_count)
+```
+
+---
+
+### 6. Hook Into Message Event
+
+In message handler:
+
+```rust
+update last_active_at
+
+if now < next_remind_at:
+    return
+
+if should_send_reminder:
+    send_reminder
+```
+
+---
+
+### 7. Implement Stop Button
+
+* Only target user can click
+* If other user:
+  return ephemeral error
+
+On success:
+
+```rust
+is_remind_opt_out = true
+```
+
+Response:
+
+通知を停止したのだ！
+
+---
+
+### 8. Implement Resume Command
+
+Command:
+
+```
+/birth remind resume
+```
+
+Behavior:
+
+```rust
+is_remind_opt_out = false
+next_remind_at = now + 1 day
+```
+
+Response:
+
+リマインドを再開したのだ！
+
+---
+
+### 9. Implement Scheduled Scan Endpoint
+
+Create:
+
+```
+POST /internal/reminder/scan
+```
+
+Behavior:
+
+* Fetch users with last_active_at within 7 days
+* Filter by reminder condition
+* Send reminders sequentially
+* Add 1–3 sec delay between sends
+
+---
+
+### 10. Implement Admin Setup Command
+
+Command:
+
+```
+/setup reminder-channel
+```
+
+Requirements:
+
+* Admin-only command based on the user table/admin column, not Discord server permissions
+* Admin command responses should be ephemeral by default
+* Run only inside a Discord guild
+* If the invoking user is not an admin, return an ephemeral denial message
+* Sync guild/member records before setup when possible
+* Configure the current guild as `reminder_guild_id` for every user currently recorded in the guild
+* Ensure the `ずんだぼっと` text channel exists
+* Users without `reminder_guild_id` must not receive birthday registration reminders
+* Send a start message with a `ユーザーを選ぶのだ` button
+* Button opens a paginated user selection UI
+* Pre-filter displayed users by: birthday missing, active within 7 days, and reminder conditions satisfied
+* Show up to 25 users per page
+* Use a multi-select menu for page users
+* Preserve selected users while paging
+* Include previous/next buttons and an execute button
+* Only the command invoker can operate the UI
+* If another user operates it, return ephemeral `この操作は自分のみ使えるのだ`
+* Execute sends selected reminders sequentially with the existing 1-3 second delay
+
+---
+
+## Constraints
+
+* Do NOT implement cron inside app
+* Assume Cloud Scheduler triggers this endpoint
+* Ensure idempotency (no duplicate sends)
+
+---
+
+## Environment Variable
+
+```
+BOT_CHANNEL_ID
+```
+
+---
+
+## Safety Requirements
+
+* Do not send multiple reminders within 24h
+* Stop after 5 reminders
+* Prevent spam with delay
+
+---
+
+## Verification (MUST PASS)
+
+* User sends message → reminder scheduled
+* Reminder is sent after delay
+* Stops after 5 times
+* Stop button works (only self)
+* Resume works (no immediate send)
+* Multiple users do not spam
+
+---
+
+## Output Requirements
+
+* MUST modify or create files
+* MUST produce a valid diff
+* MUST compile
+* MUST pass tests
+
+---
+
+## Definition of Done
+
+* Reminder logic works end-to-end
+* No duplicate notifications
+* No CI failure (diff exists)
 
 
 Detected issue kind:
-codex
+logic
 
 Rules:
 - Follow AGENTS.md

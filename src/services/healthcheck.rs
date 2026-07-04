@@ -246,11 +246,9 @@ impl<'a> HttpRequest<'a> {
     }
 
     fn header(&self, name: &str) -> Option<&'a str> {
-        self.headers
-            .iter()
-            .find_map(|(header_name, value)| {
-                header_name.eq_ignore_ascii_case(name).then_some(*value)
-            })
+        self.headers.iter().find_map(|(header_name, value)| {
+            header_name.eq_ignore_ascii_case(name).then_some(*value)
+        })
     }
 }
 
@@ -329,7 +327,10 @@ mod tests {
     fn signed_interaction_request(body: &str) -> String {
         let signing_key = SigningKey::from_bytes(&[7_u8; 32]);
         let verifying_key = signing_key.verifying_key();
-        env::set_var(DISCORD_PUBLIC_KEY_ENV, hex::encode(verifying_key.to_bytes()));
+        env::set_var(
+            DISCORD_PUBLIC_KEY_ENV,
+            hex::encode(verifying_key.to_bytes()),
+        );
 
         let timestamp = "1700000000";
         let mut message = Vec::new();
