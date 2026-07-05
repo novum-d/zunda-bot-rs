@@ -238,30 +238,6 @@ impl ZundaBotDatabase {
         Ok(())
     }
 
-    pub async fn update_member_last_active(
-        &self,
-        guild_id: i64,
-        member_id: i64,
-        now: DateTime<Utc>,
-        first_remind_at: DateTime<Utc>,
-    ) -> anyhow::Result<()> {
-        sqlx::query(
-            r#"
-        UPDATE guild_member
-        SET last_active_at = $1,
-            next_remind_at = COALESCE(next_remind_at, $2)
-        WHERE guild_id = $3 AND member_id = $4
-        "#,
-        )
-        .bind(now)
-        .bind(first_remind_at)
-        .bind(guild_id)
-        .bind(member_id)
-        .execute(&*self.pool)
-        .await?;
-        Ok(())
-    }
-
     pub async fn update_member_manual_reminder_target(
         &self,
         guild_id: i64,
@@ -308,37 +284,6 @@ impl ZundaBotDatabase {
         .fetch_all(&*self.pool)
         .await?;
         Ok(rows)
-    }
-
-    pub async fn select_active_reminder_candidate_by_member_id(
-        &self,
-        member_id: i64,
-        active_since: DateTime<Utc>,
-    ) -> anyhow::Result<Option<GuildMember>> {
-        let row = sqlx::query_as::<_, GuildMember>(
-            r#"
-        SELECT
-            guild_id,
-            member_id,
-            birth,
-            last_notified,
-            last_active_at,
-            last_reminded_at,
-            next_remind_at,
-            remind_count,
-            is_remind_opt_out,
-            is_reminder_opted_in
-        FROM guild_member
-        WHERE member_id = $1
-          AND is_reminder_opted_in = TRUE
-          AND last_active_at >= $2
-        "#,
-        )
-        .bind(member_id)
-        .bind(active_since)
-        .fetch_optional(&*self.pool)
-        .await?;
-        Ok(row)
     }
 
     pub async fn update_member_reminder_sent(

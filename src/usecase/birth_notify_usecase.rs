@@ -1,5 +1,4 @@
 use crate::data::guild_repository::GuildRepository;
-use crate::models::common::Error;
 use crate::models::data::GuildMember;
 use chrono::{Datelike, Local, TimeZone};
 use chrono_tz::Asia::Tokyo;
@@ -10,6 +9,7 @@ use sqlx::PgPool;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+#[derive(Clone)]
 pub struct BirthNotifyUsecase {
     guild_repo: GuildRepository,
     http: Arc<Http>,
@@ -24,7 +24,7 @@ impl BirthNotifyUsecase {
         })
     }
 
-    pub async fn invoke(&self) -> anyhow::Result<(), Error> {
+    pub async fn invoke(&self) -> anyhow::Result<()> {
         let http = &self.http;
         let now = Tokyo.from_utc_datetime(&Local::now().naive_utc());
         let members = self.guild_repo.get_all_members().await?;

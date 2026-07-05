@@ -16,12 +16,6 @@ pub async fn run_healthcheck_server(data: Data) -> anyhow::Result<()> {
     run_healthcheck_server_on(port, Some(data)).await
 }
 
-pub async fn run_passive_healthcheck_server() -> anyhow::Result<()> {
-    let port = env::var("PORT").unwrap_or_else(|_| "8080".to_string());
-    let port: u16 = port.parse()?;
-    run_healthcheck_server_on(port, None).await
-}
-
 pub async fn run_healthcheck_server_on(port: u16, data: Option<Data>) -> anyhow::Result<()> {
     let listener = TcpListener::bind(format!("0.0.0.0:{port}")).await?;
     tracing::info!("Healthcheck server listening on 0.0.0.0:{}", port);
@@ -105,6 +99,19 @@ async fn handle_request(request: &[u8], data: Option<&Data>) -> String {
             Err(e) => {
                 tracing::error!("birthday reminder scan failed: {}", e);
                 json_response(500, r#"{"error":"reminder scan failed"}"#)
+            }
+        };
+    }
+
+    if request.method == "POST" && request.path == "/internal/birthday/notify" {
+        let Some(data) = data else {
+            return json_response(503, r#"{"error":"birthday notification disabled"}"#);
+        };
+        return match data.birth_notify_usecase.invoke().await {
+            Ok(()) => json_response(200, r#"{"ok":true}"#),
+            Err(e) => {
+                tracing::error!("birthday notification failed: {}", e);
+                json_response(500, r#"{"error":"birthday notification failed"}"#)
             }
         };
     }
@@ -326,6 +333,16 @@ mod tests {
 
         assert!(response.starts_with("HTTP/1.1 400 Bad Request"));
         assert!(response.ends_with(r#"{"error":"unsupported interaction type"}"#));
+    }
+
+    #[tokio::test]
+    async fn birthday_notify_returns_disabled_without_data() {
+        let request = "POST /internal/birthday/notify HTTP/1.1\r\nContent-Length: 0\r\n\r\n";
+
+        let response = handle_request(request.as_bytes(), None).await;
+
+        assert!(response.starts_with("HTTP/1.1 503 Service Unavailable"));
+        assert!(response.ends_with(r#"{"error":"birthday notification disabled"}"#));
     }
 
     fn signed_interaction_request(body: &str) -> String {

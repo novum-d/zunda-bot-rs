@@ -1,5 +1,4 @@
 use crate::data::guild_repository::GuildRepository;
-use crate::models::common::Error;
 use crate::models::data::GuildMember;
 use crate::models::domain::{MyGuild, MyGuildMember};
 use poise::futures_util::future::join_all;
@@ -19,7 +18,7 @@ impl GuildUpdateUsecase {
         Ok(GuildUpdateUsecase { guild_repo })
     }
 
-    pub async fn invoke(&self) -> anyhow::Result<(), Error> {
+    pub async fn invoke(&self) -> anyhow::Result<()> {
         // --- ギルド情報取得  ------------------------------------------------------------------------
         // guildテーブルから「ギルドID」のリストを取得
         let local_guild_ids = self.guild_repo.get_guild_ids().await?;

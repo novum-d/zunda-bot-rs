@@ -1,10 +1,8 @@
 use crate::data::guild_repository::GuildRepository;
-use crate::models::common::{Context, Error};
 use crate::res::colors::{EMBED_COLOR_SUCCESS, EMBED_COLOR_WARNING};
 use chrono::Datelike;
 use poise::futures_util::future::join_all;
-use poise::CreateReply;
-use serenity::all::{CreateEmbed, GuildId, Http};
+use serenity::all::{GuildId, Http};
 use sqlx::PgPool;
 use std::sync::Arc;
 
@@ -21,19 +19,6 @@ impl BirthListUsecase {
             guild_repo,
             http: http.clone(),
         })
-    }
-
-    pub async fn invoke(&self, poise_ctx: Context<'_>) -> anyhow::Result<(), Error> {
-        // コマンドが実行されたギルドのギルドIDを取得
-        let guild_id = self
-            .guild_repo
-            .fetch_guild_id_from_command(poise_ctx)
-            .await?;
-
-        let view = self.build_view(guild_id).await?;
-        poise_ctx.send(view.into_reply()).await?;
-
-        Ok(())
     }
 
     pub async fn build_view(&self, guild_id: GuildId) -> anyhow::Result<BirthListView> {
@@ -84,26 +69,6 @@ pub enum BirthListView {
 }
 
 impl BirthListView {
-    pub fn into_reply(self) -> CreateReply {
-        match self {
-            Self::Empty => CreateReply::default()
-                .embed(
-                    CreateEmbed::new()
-                        .title("⚠️ 誕生日が登録されていないのだ")
-                        .color(EMBED_COLOR_WARNING),
-                )
-                .ephemeral(true),
-            Self::List { description } => CreateReply::default()
-                .embed(
-                    CreateEmbed::new()
-                        .title("🎉 誕生日リスト")
-                        .description(description)
-                        .color(EMBED_COLOR_SUCCESS),
-                )
-                .ephemeral(true),
-        }
-    }
-
     pub fn title(&self) -> &'static str {
         match self {
             Self::Empty => "⚠️ 誕生日が登録されていないのだ",

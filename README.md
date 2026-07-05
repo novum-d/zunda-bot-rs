@@ -29,10 +29,8 @@ Botの[トークンを作成](https://note.com/exteoi/n/nf1c37cb26c41)
 >このトークンを使ってBotプログラムがDiscord APIにアクセスし、メッセージ送信やイベント受信などの操作が可能になりますが、*
 *第三者に知られるとBotの乗っ取りなどの危険があるため、絶対に公開しないよう注意してください**
 
-1.2. ボットに特権を付与  
-ボット設定画面を開き、メニュー`Bot`
-で[Privileged Intents](https://discord.com/developers/docs/events/gateway#privileged-intents)に含まれるボットの
-`MESSAGE_CONTENT(メッセージ受取権限)`を有効化
+1.2. Discord Interactions Endpoint を設定
+Discord Developer Portal の General Information に表示される Public Key を控えます。デプロイ後、Interactions Endpoint URL に `https://{{SERVICE_URL}}/interactions` を設定します。
 
 1.3. 不要なセキュリティ設定を解除  
 Botをサーバーに追加する際に毎回認証を求められるので、`Requires OAuth2 Code Grant(Botをサーバーに追加する際に認証フローが必須となる設定)`
@@ -41,7 +39,7 @@ Botをサーバーに追加する際に毎回認証を求められるので、`R
 1.4. ボットをサーバーに追加  
 メニュー`OAuth`で`OAuth2 URL Generator`で以下を選択したURLをブラウザで開く
 
-* SCOPES: `bot`
+* SCOPES: `bot`, `applications.commands`
 * BOT PERMISSIONS: `Administrator`
 
    ```txt
@@ -146,15 +144,17 @@ gcloud run deploy zunda-bot-rs \
   --image {{REGION}}-docker.pkg.dev/{{PROJECT_ID}}/{{REPOSITORY}}/zunda-bot-rs \
   --region {{REGION}} \
   --allow-unauthenticated \
-  --set-env-vars DISCORD_PUBLIC_KEY={{DISCORD_PUBLIC_KEY}},ENABLE_DISCORD_BOT=true \
+  --set-env-vars DISCORD_PUBLIC_KEY={{DISCORD_PUBLIC_KEY}} \
   --set-secrets DISCORD_TOKEN={{DISCORD_TOKEN_SECRET}}:latest,DATABASE_URL={{DATABASE_URL_SECRET}}:latest
 ```
 
 Cloud Run の起動確認用に、コンテナは `PORT` 環境変数のポートで HTTP 200 を返します。
 Discord Developer Portal の Interactions Endpoint URL には `https://{{SERVICE_URL}}/interactions` を指定できます。`POST /interactions` は Discord の `X-Signature-Ed25519` / `X-Signature-Timestamp` を `DISCORD_PUBLIC_KEY` で検証し、PING interaction に応答します。`DISCORD_PUBLIC_KEY` が未設定の場合、署名検証ができないため Discord の interaction は利用できません。Cloud Run が未認証アクセスを拒否している場合も、Discord から検証リクエストを送れないため登録に失敗します。
+Discord Gateway には接続せず、slash command と component interaction は `POST /interactions` で受信します。起動時の slash command 登録も Discord REST API で行います。
 誕生日未登録リマインドは、送信時に `ずんだぼっと` という名前のテキストチャンネルを探します。存在しない場合は Bot が自動作成します。
 誕生日未登録リマインドを送信するには、`guild_member.is_admin` が `true` の管理者ユーザーが通知先にしたい Discord サーバーで `/setup reminder-channel` を実行します。この設定が完了するまで、ユーザーにはリマインド通知を送信しません。管理者コマンドの応答はエフェメラルで表示し、コマンド実行後は対象ユーザーをページング付きセレクトで選択して、選択したユーザーへ順次リマインドを送信できます。
-定期スキャンは、Cloud Scheduler などから `POST /internal/reminder/scan` を呼び出します。
+誕生日未登録リマインドの定期スキャンは、Cloud Scheduler などから `POST /internal/reminder/scan` を呼び出します。
+当日の誕生日通知は、Cloud Scheduler などから `POST /internal/birthday/notify` を呼び出します。
 
 5.8. デプロイ後のログ確認
 
@@ -164,7 +164,7 @@ gcloud run services logs read zunda-bot-rs \
   --limit=200
 ```
 
-5.9. Discord Gateway 接続維持のため、常時起動設定を行う
+5.9. Cloud Run の webhook 応答安定化のため、常時起動設定を行う
 
 ```shell
 gcloud run services update zunda-bot-rs \
@@ -179,7 +179,7 @@ gcloud run services update zunda-bot-rs \
 gcloud run services update zunda-bot-rs \
   --project "${GCP_PROJECT_ID}" \
   --region "${GCP_REGION}" \
-  --update-env-vars DISCORD_PUBLIC_KEY="${DISCORD_PUBLIC_KEY}",ENABLE_DISCORD_BOT=true
+  --update-env-vars DISCORD_PUBLIC_KEY="${DISCORD_PUBLIC_KEY}"
 ```
 
 5.10. 設定が反映されたことを確認

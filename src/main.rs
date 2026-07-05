@@ -1,4 +1,3 @@
-mod commands;
 mod data;
 mod handler;
 mod models;
@@ -6,25 +5,19 @@ mod reminder;
 mod res;
 mod services;
 mod usecase;
-mod worker;
 
-use crate::commands::birth::birth;
-use crate::commands::setup::setup;
 use crate::models::common::Data;
 use crate::reminder::service::ReminderService;
-use crate::services::healthcheck::{run_healthcheck_server, run_passive_healthcheck_server};
+use crate::services::healthcheck::run_healthcheck_server;
 use crate::usecase::birth_list_usecase::BirthListUsecase;
 use crate::usecase::birth_notify_usecase::BirthNotifyUsecase;
 use crate::usecase::birth_reset_usecase::BirthResetUsecase;
 use crate::usecase::birth_signup_usecase::BirthSignupUsecase;
 use crate::usecase::guild_update_usecase::GuildUpdateUsecase;
-use crate::worker::annual_birthday_notifier::AnnualBirthdayNotifier;
 use anyhow::Context as _;
-use commands::hello::hello;
 use dotenvy::dotenv;
-use poise::serenity_prelude as serenity;
-use serenity::model::gateway::GatewayIntents;
-use serenity::Client;
+use serenity::all::{ChannelType, Command, CommandOptionType, CreateCommand, CreateCommandOption};
+use serenity::http::Http;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
 use std::sync::Arc;
@@ -44,12 +37,6 @@ async fn main() -> anyhow::Result<()> {
         subscriber.with_ansi(false).compact().init();
     }
 
-    if env::var("ENABLE_DISCORD_BOT").context("'ENABLE_DISCORD_BOT' was not found")? == "false" {
-        return run_passive_healthcheck_server()
-            .await
-            .context("Passive healthcheck server stopped");
-    }
-
     let database_url = env::var("DATABASE_URL").context("'DATABASE_URL' was not found")?;
     let pool = PgPoolOptions::new()
         .max_connections(5)
@@ -62,101 +49,109 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let token = env::var("DISCORD_TOKEN").context("'DISCORD_TOKEN' was not found")?;
+    let http = Arc::new(Http::new(&token));
 
-    let intents = GatewayIntents::GUILD_MEMBERS // ギルドメンバー情報取得権限
-        | GatewayIntents::GUILD_MESSAGES // ギルド内のメッセージイベント受信権限
-        | GatewayIntents::GUILD_MESSAGE_REACTIONS // ギルド内のリアクションイベント受信権限
-        | GatewayIntents::DIRECT_MESSAGES
-        | GatewayIntents::MESSAGE_CONTENT;
+    let pool = Arc::new(pool);
+    let birth_list_usecase = BirthListUsecase::new(pool.clone(), http.clone())?;
+    let birth_signup_usecase = BirthSignupUsecase::new(pool.clone(), http.clone())?;
+    let birth_reset_usecase = BirthResetUsecase::new(pool.clone(), http.clone())?;
+    let birth_notify_usecase = BirthNotifyUsecase::new(pool.clone(), http.clone())?;
+    let guild_update_usecase = GuildUpdateUsecase::new(pool.clone(), http.clone())?;
+    let reminder_service = ReminderService::new(pool.clone(), http.clone())?;
 
-    let framework = poise::Framework::builder()
-        .options(poise::FrameworkOptions {
-            commands: vec![
-                // コマンドはここに追加
-                hello(),
-                birth(),
-                setup(),
-            ],
-            event_handler: |ctx, event, _framework, data| {
-                Box::pin(async move {
-                    match event {
-                        serenity::FullEvent::Message { new_message } => {
-                            if let Err(e) =
-                                handler::message::handle_message(ctx, data, new_message).await
-                            {
-                                tracing::warn!("birthday reminder message handler failed: {}", e);
-                            }
-                        }
-                        serenity::FullEvent::ReactionAdd { add_reaction } => {
-                            if let Err(e) =
-                                handler::reaction::handle_reaction_add(ctx, data, add_reaction)
-                                    .await
-                            {
-                                tracing::warn!("birthday reminder reaction handler failed: {}", e);
-                            }
-                        }
-                        serenity::FullEvent::InteractionCreate {
-                            interaction: serenity::Interaction::Component(component),
-                        } => match handler::interaction::handle_component_interaction(
-                            data, component,
-                        )
-                        .await
-                        {
-                            Ok(true) => {}
-                            Ok(false) => {}
-                            Err(e) => tracing::warn!(
-                                "birthday reminder interaction handler failed: {}",
-                                e
-                            ),
-                        },
-                        _ => {}
-                    }
-                    Ok(())
-                })
-            },
-            ..Default::default()
-        })
-        .setup(move |ctx, _ready, framework| {
-            let pool = Arc::new(pool.clone());
-            Box::pin(async move {
-                let birth_list_usecase = BirthListUsecase::new(pool.clone(), ctx.http.clone())?;
-                let birth_signup_usecase = BirthSignupUsecase::new(pool.clone(), ctx.http.clone())?;
-                let birth_reset_usecase = BirthResetUsecase::new(pool.clone(), ctx.http.clone())?;
-                let birth_notify_usecase = BirthNotifyUsecase::new(pool.clone(), ctx.http.clone())?;
-                let guild_update_usecase = GuildUpdateUsecase::new(pool.clone(), ctx.http.clone())?;
-                let reminder_service = ReminderService::new(pool.clone(), ctx.http.clone())?;
-                guild_update_usecase.invoke().await?;
+    guild_update_usecase
+        .invoke()
+        .await
+        .context("Failed to sync guilds on startup")?;
+    register_global_commands(&http).await?;
 
-                tokio::spawn(AnnualBirthdayNotifier::run(birth_notify_usecase));
-
-                poise::builtins::register_globally(ctx, &framework.options().commands).await?;
-
-                let data = Data {
-                    birth_list_usecase,
-                    birth_signup_usecase,
-                    birth_reset_usecase,
-                    guild_update_usecase,
-                    reminder_service,
-                    discord_http: ctx.http.clone(),
-                };
-                let healthcheck_data = data.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = run_healthcheck_server(healthcheck_data).await {
-                        tracing::error!("Healthcheck server stopped: {}", e);
-                    }
-                });
-                Ok(data)
-            })
-        })
-        .build();
-
-    let bot = async {
-        let mut client = Client::builder(&token, intents)
-            .framework(framework)
-            .await?;
-        client.start().await?;
-        Ok::<(), anyhow::Error>(())
+    let data = Data {
+        birth_list_usecase,
+        birth_signup_usecase,
+        birth_reset_usecase,
+        birth_notify_usecase,
+        guild_update_usecase,
+        reminder_service,
+        discord_http: http,
     };
 
-    bot.await.context("Discord bot stopped")
+    run_healthcheck_server(data)
+        .await
+        .context("Healthcheck server stopped")
+}
+
+async fn register_global_commands(http: &Http) -> anyhow::Result<()> {
+    let commands = vec![hello_command(), birth_command(), setup_command()];
+    Command::set_global_commands(http, commands)
+        .await
+        .context("Failed to register global slash commands")?;
+    Ok(())
+}
+
+fn hello_command() -> CreateCommand {
+    CreateCommand::new("hello").description("あいさつを返すのだ")
+}
+
+fn birth_command() -> CreateCommand {
+    CreateCommand::new("birth")
+        .description("誕生日通知を操作するのだ")
+        .add_option(CreateCommandOption::new(
+            CommandOptionType::SubCommand,
+            "list",
+            "誕生日リストを表示するのだ",
+        ))
+        .add_option(CreateCommandOption::new(
+            CommandOptionType::SubCommand,
+            "signup",
+            "自身の誕生日を登録するのだ",
+        ))
+        .add_option(CreateCommandOption::new(
+            CommandOptionType::SubCommand,
+            "reset",
+            "自身の誕生日登録を解除するのだ",
+        ))
+        .add_option(
+            CreateCommandOption::new(
+                CommandOptionType::SubCommandGroup,
+                "remind",
+                "誕生日未登録リマインドを操作するのだ",
+            )
+            .add_sub_option(CreateCommandOption::new(
+                CommandOptionType::SubCommand,
+                "resume",
+                "誕生日未登録リマインドを再開するのだ",
+            )),
+        )
+}
+
+fn setup_command() -> CreateCommand {
+    let channel_option = || {
+        CreateCommandOption::new(CommandOptionType::Channel, "channel", "対象チャンネル")
+            .required(true)
+            .channel_types(vec![ChannelType::Text])
+    };
+
+    CreateCommand::new("setup")
+        .description("管理者向け設定を操作するのだ")
+        .add_option(CreateCommandOption::new(
+            CommandOptionType::SubCommand,
+            "reminder-channel",
+            "誕生日未登録リマインドの送信対象を選ぶのだ",
+        ))
+        .add_option(
+            CreateCommandOption::new(
+                CommandOptionType::SubCommand,
+                "add-notification-channel",
+                "誕生日通知チャンネルを追加するのだ",
+            )
+            .add_sub_option(channel_option()),
+        )
+        .add_option(
+            CreateCommandOption::new(
+                CommandOptionType::SubCommand,
+                "remove-notification-channel",
+                "誕生日通知チャンネルを削除するのだ",
+            )
+            .add_sub_option(channel_option()),
+        )
 }

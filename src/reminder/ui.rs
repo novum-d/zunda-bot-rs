@@ -85,14 +85,6 @@ pub fn parse_reminder_ui_custom_id(custom_id: &str) -> Option<ReminderUiAction> 
     }
 }
 
-pub fn start_components(owner_id: i64, guild_id: i64, session_id: &str) -> Vec<CreateActionRow> {
-    vec![CreateActionRow::Buttons(vec![CreateButton::new(
-        start_button_custom_id(owner_id, guild_id, session_id),
-    )
-    .label("ユーザーを選ぶのだ")
-    .style(ButtonStyle::Primary)])]
-}
-
 pub fn build_selection_content(candidates: &[ReminderUiCandidate], page: usize) -> String {
     if candidates.is_empty() {
         return "誕生日が未登録のユーザーはいないのだ！".to_string();
