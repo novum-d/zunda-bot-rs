@@ -293,6 +293,16 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn healthcheck_root_still_returns_ok() {
+        let request = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
+
+        let response = handle_request(request, None).await;
+
+        assert!(response.starts_with("HTTP/1.1 200 OK"));
+        assert!(response.ends_with("\r\n\r\nOK"));
+    }
+
+    #[tokio::test]
     async fn discord_ping_interaction_returns_pong_after_signature_verification() {
         let request = signed_interaction_request(r#"{"type":1}"#);
 
@@ -315,6 +325,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn discord_interaction_rejects_missing_signature_headers() {
+        set_public_key_env();
+        let request = concat!(
+            "POST /interactions HTTP/1.1\r\n",
+            "Host: example.com\r\n",
+            "Content-Length: 10\r\n",
+            "\r\n",
+            "{\"type\":1}"
+        );
+
+        let response = handle_request(request.as_bytes(), None).await;
+
+        assert!(response.starts_with("HTTP/1.1 401 Unauthorized"));
+        assert!(response.ends_with(r#"{"error":"invalid request signature"}"#));
+    }
+
+    #[tokio::test]
     async fn discord_interaction_returns_error_for_unsupported_type() {
         let request = signed_interaction_request(r#"{"type":2}"#);
 
@@ -326,11 +353,7 @@ mod tests {
 
     fn signed_interaction_request(body: &str) -> String {
         let signing_key = SigningKey::from_bytes(&[7_u8; 32]);
-        let verifying_key = signing_key.verifying_key();
-        env::set_var(
-            DISCORD_PUBLIC_KEY_ENV,
-            hex::encode(verifying_key.to_bytes()),
-        );
+        set_public_key_env();
 
         let timestamp = "1700000000";
         let mut message = Vec::new();
@@ -343,5 +366,14 @@ mod tests {
             hex::encode(signature.to_bytes()),
             body.len()
         )
+    }
+
+    fn set_public_key_env() {
+        let signing_key = SigningKey::from_bytes(&[7_u8; 32]);
+        let verifying_key = signing_key.verifying_key();
+        env::set_var(
+            DISCORD_PUBLIC_KEY_ENV,
+            hex::encode(verifying_key.to_bytes()),
+        );
     }
 }
