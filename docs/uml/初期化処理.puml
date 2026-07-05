@@ -6,7 +6,8 @@ start
 
 if (ENABLE_DISCORD_BOT == "false") is (はい) then
   :Passive healthcheck serverを起動;
-  :通常のhealthcheckのみ応答する;
+  :通常のhealthcheckと
+  POST /interactions に応答する;
   stop
 else (いいえ)
 endif
@@ -106,6 +107,8 @@ note right
   通常のhealthcheckに加えて
   POST /internal/reminder/scan で
   誕生日未登録リマインドのスキャンを実行できる。
+  POST /interactions で
+  Discord Interaction webhookを受信できる。
 end note
 
 :グローバルslash commandをDiscordへ登録;
