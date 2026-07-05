@@ -14,7 +14,7 @@ jobs:
   codex:
     if: github.event_name == 'issues' && github.event.label.name == 'codex'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -34,9 +34,12 @@ jobs:
 
       - name: Classify issue
         id: issue_type
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
         run: |
-          issue_title=$(printf '%s\n' "${{ github.event.issue.title }}")
-          issue_body=$(printf '%s\n' "${{ github.event.issue.body }}")
+          issue_title=$ISSUE_TITLE
+          issue_body=$ISSUE_BODY
 
           issue_kind="generic"
 
@@ -61,10 +64,15 @@ jobs:
           echo "kind=$issue_kind" >> "$GITHUB_OUTPUT"
 
       - name: Prepare prompt
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_KIND: ${{ steps.issue_type.outputs.kind }}
         run: |
           mkdir -p .codex
 
-          cat > .codex/prompt.md << 'EOF'
+          {
+          cat << 'EOF'
           You are implementing a GitHub issue for this repository.
 
           Before making changes, read:
@@ -75,17 +83,24 @@ jobs:
           - docs/ai/DECISIONS.md
 
           Issue title:
-          ${{ github.event.issue.title }}
+          EOF
+          printf '%s\n' "$ISSUE_TITLE"
+          cat << 'EOF'
 
           Issue body:
-          ${{ github.event.issue.body }}
+          EOF
+          printf '%s\n' "$ISSUE_BODY"
+          cat << 'EOF'
 
           Detected issue kind:
-          ${{ steps.issue_type.outputs.kind }}
+          EOF
+          printf '%s\n' "$ISSUE_KIND"
+          cat << 'EOF'
 
           Rules:
           - Follow AGENTS.md
           - If the issue explicitly allows scope overrides, follow the issue scope
+          - If the issue explicitly defines a broad implementation, do not stop solely because the work is large
           - Do not touch workflows, deploy, infra, or secrets unless the issue explicitly allows it
           - Write PR title and body in Japanese
           - Run cargo fmt --check, cargo clippy --all-targets --all-features -- -D warnings, cargo test when possible
@@ -93,6 +108,7 @@ jobs:
           - Stop if approval is required
           - Keep changes focused on the issue only
           EOF
+          } > .codex/prompt.md
 
       - name: Run Codex
         id: codex
@@ -105,6 +121,14 @@ jobs:
 
       - name: Restore generated Codex prompt
         run: git checkout -- .codex/prompt.md
+
+      - name: Verify repository changes
+        run: |
+          changed_files=$(git diff --name-only -- . ':(exclude).codex')
+          if [ -z "$changed_files" ]; then
+            echo "::error::Codex did not create repository changes. Check the Run Codex log for blockers, scope-limit decisions, or approval requests."
+            exit 1
+          fi
 
       - name: Install Rust components
         continue-on-error: true
@@ -129,8 +153,10 @@ jobs:
 
       - name: Build Pull Request metadata
         id: pr_metadata
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
         run: |
-          issue_title=$(printf '%s\n' "${{ github.event.issue.title }}")
+          issue_title=$ISSUE_TITLE
           safe_title=$(printf '%s\n' "$issue_title" | sed -E 's/^\[[^]]+\][[:space:]]*//')
           if [ -z "$safe_title" ]; then
             safe_title="Issue #${{ github.event.issue.number }} の対応"

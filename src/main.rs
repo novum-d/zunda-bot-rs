@@ -125,15 +125,9 @@ async fn main() -> anyhow::Result<()> {
                 let birth_notify_usecase = BirthNotifyUsecase::new(pool.clone(), ctx.http.clone())?;
                 let guild_update_usecase = GuildUpdateUsecase::new(pool.clone(), ctx.http.clone())?;
                 let reminder_service = ReminderService::new(pool.clone(), ctx.http.clone())?;
-                let reminder_scan_service = ReminderService::new(pool.clone(), ctx.http.clone())?;
                 guild_update_usecase.invoke().await?;
 
                 tokio::spawn(AnnualBirthdayNotifier::run(birth_notify_usecase));
-                tokio::spawn(async move {
-                    if let Err(e) = run_healthcheck_server(reminder_scan_service).await {
-                        tracing::error!("Healthcheck server stopped: {}", e);
-                    }
-                });
 
                 poise::builtins::register_globally(ctx, &framework.options().commands).await?;
 
@@ -145,6 +139,12 @@ async fn main() -> anyhow::Result<()> {
                     reminder_service,
                     discord_http: ctx.http.clone(),
                 };
+                let healthcheck_data = data.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = run_healthcheck_server(healthcheck_data).await {
+                        tracing::error!("Healthcheck server stopped: {}", e);
+                    }
+                });
                 Ok(data)
             })
         })

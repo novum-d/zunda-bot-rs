@@ -1,6 +1,6 @@
-use crate::reminder::service::ReminderService;
+use crate::models::common::Data;
+use crate::services::interaction_webhook::{handle_interaction_body, WebhookHttpResponse};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-use serde::Deserialize;
 use std::env;
 use std::str;
 
@@ -10,10 +10,10 @@ use tokio::net::{TcpListener, TcpStream};
 const DISCORD_PUBLIC_KEY_ENV: &str = "DISCORD_PUBLIC_KEY";
 const MAX_REQUEST_BYTES: usize = 64 * 1024;
 
-pub async fn run_healthcheck_server(reminder_service: ReminderService) -> anyhow::Result<()> {
+pub async fn run_healthcheck_server(data: Data) -> anyhow::Result<()> {
     let port = env::var("PORT").unwrap_or_else(|_| "8080".to_string());
     let port: u16 = port.parse()?;
-    run_healthcheck_server_on(port, Some(reminder_service)).await
+    run_healthcheck_server_on(port, Some(data)).await
 }
 
 pub async fn run_passive_healthcheck_server() -> anyhow::Result<()> {
@@ -22,16 +22,13 @@ pub async fn run_passive_healthcheck_server() -> anyhow::Result<()> {
     run_healthcheck_server_on(port, None).await
 }
 
-pub async fn run_healthcheck_server_on(
-    port: u16,
-    reminder_service: Option<ReminderService>,
-) -> anyhow::Result<()> {
+pub async fn run_healthcheck_server_on(port: u16, data: Option<Data>) -> anyhow::Result<()> {
     let listener = TcpListener::bind(format!("0.0.0.0:{port}")).await?;
     tracing::info!("Healthcheck server listening on 0.0.0.0:{}", port);
 
     loop {
         let (mut stream, _) = listener.accept().await?;
-        let reminder_service = reminder_service.clone();
+        let data = data.clone();
 
         tokio::spawn(async move {
             let request = match read_http_request(&mut stream).await {
@@ -45,7 +42,7 @@ pub async fn run_healthcheck_server_on(
 
             let request_head = request_head_for_log(&request);
             tracing::debug!(%request_head, "received healthcheck request");
-            let response = handle_request(&request, reminder_service.as_ref()).await;
+            let response = handle_request(&request, data.as_ref()).await;
             tracing::debug!(?response, "healthcheck response");
 
             if let Err(e) = stream.write_all(response.as_bytes()).await {
@@ -81,7 +78,7 @@ async fn read_http_request(stream: &mut TcpStream) -> anyhow::Result<Option<Vec<
 
         request.extend_from_slice(&buffer[..read_size]);
         if request.len() > MAX_REQUEST_BYTES {
-            anyhow::bail!("request exceeded {} bytes", MAX_REQUEST_BYTES);
+            anyhow::bail!("request exceeded {MAX_REQUEST_BYTES} bytes");
         }
 
         if request_is_complete(&request) {
@@ -90,20 +87,20 @@ async fn read_http_request(stream: &mut TcpStream) -> anyhow::Result<Option<Vec<
     }
 }
 
-async fn handle_request(request: &[u8], reminder_service: Option<&ReminderService>) -> String {
+async fn handle_request(request: &[u8], data: Option<&Data>) -> String {
     let Some(request) = HttpRequest::parse(request) else {
         return json_response(400, r#"{"error":"bad request"}"#);
     };
 
     if request.method == "POST" && request.path == "/interactions" {
-        return handle_discord_interaction(&request);
+        return handle_discord_interaction(&request, data).await;
     }
 
     if request.method == "POST" && request.path == "/internal/reminder/scan" {
-        let Some(reminder_service) = reminder_service else {
+        let Some(data) = data else {
             return json_response(503, r#"{"error":"reminder scan disabled"}"#);
         };
-        return match reminder_service.scan_and_send().await {
+        return match data.reminder_service.scan_and_send().await {
             Ok(sent_count) => json_response(200, &format!(r#"{{"sent":{sent_count}}}"#)),
             Err(e) => {
                 tracing::error!("birthday reminder scan failed: {}", e);
@@ -115,24 +112,21 @@ async fn handle_request(request: &[u8], reminder_service: Option<&ReminderServic
     String::from_utf8_lossy(response_bytes()).to_string()
 }
 
-fn handle_discord_interaction(request: &HttpRequest<'_>) -> String {
+async fn handle_discord_interaction(request: &HttpRequest<'_>, data: Option<&Data>) -> String {
     if let Err(e) = verify_discord_signature(request) {
         tracing::warn!("Discord interaction signature verification failed: {}", e);
         return json_response(401, r#"{"error":"invalid request signature"}"#);
     }
 
-    let interaction = match serde_json::from_slice::<DiscordInteraction>(request.body) {
-        Ok(interaction) => interaction,
+    let response = match handle_interaction_body(data, request.body).await {
+        Ok(response) => response,
         Err(e) => {
-            tracing::warn!("Discord interaction JSON parse failed: {}", e);
+            tracing::warn!("Discord interaction handling failed: {}", e);
             return json_response(400, r#"{"error":"bad request"}"#);
         }
     };
 
-    match interaction.interaction_type {
-        1 => json_response(200, r#"{"type":1}"#),
-        _ => json_response(400, r#"{"error":"unsupported interaction type"}"#),
-    }
+    webhook_response(response)
 }
 
 fn verify_discord_signature(request: &HttpRequest<'_>) -> Result<(), &'static str> {
@@ -199,16 +193,32 @@ fn request_head_for_log(request: &[u8]) -> String {
 }
 
 fn json_response(status: u16, body: &str) -> String {
+    http_response(status, Some("application/json"), body)
+}
+
+fn webhook_response(response: WebhookHttpResponse) -> String {
+    if response.body.is_empty() {
+        http_response(response.status, None, "")
+    } else {
+        http_response(response.status, Some("application/json"), &response.body)
+    }
+}
+
+fn http_response(status: u16, content_type: Option<&str>, body: &str) -> String {
     let status_text = match status {
         200 => "OK",
+        204 => "No Content",
         400 => "Bad Request",
         401 => "Unauthorized",
         503 => "Service Unavailable",
         500 => "Internal Server Error",
         _ => "OK",
     };
+    let content_type = content_type
+        .map(|value| format!("Content-Type: {value}\r\n"))
+        .unwrap_or_default();
     format!(
-        "HTTP/1.1 {status} {status_text}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        "HTTP/1.1 {status} {status_text}\r\n{content_type}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     )
 }
@@ -250,12 +260,6 @@ impl<'a> HttpRequest<'a> {
             header_name.eq_ignore_ascii_case(name).then_some(*value)
         })
     }
-}
-
-#[derive(Debug, Deserialize)]
-struct DiscordInteraction {
-    #[serde(rename = "type")]
-    interaction_type: u8,
 }
 
 #[cfg(test)]
@@ -316,7 +320,7 @@ mod tests {
 
     #[tokio::test]
     async fn discord_interaction_returns_error_for_unsupported_type() {
-        let request = signed_interaction_request(r#"{"type":2}"#);
+        let request = signed_interaction_request(r#"{"type":99}"#);
 
         let response = handle_request(request.as_bytes(), None).await;
 

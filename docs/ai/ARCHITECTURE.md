@@ -279,7 +279,7 @@ All PRs should:
 * Reference the related issue
 * Include changed files
 * Include test results
-* Stay under 300 lines if possible
+* Stay under 300 lines when the issue scope reasonably allows it
 * Stay within the allowed paths
 * Avoid touching unrelated code
 
@@ -296,11 +296,18 @@ Issue 番号、変更内容、テスト結果を含める。
 Codex must immediately stop if:
 
 * A forbidden path would be modified
-* More than 10 files would change
-* More than 300 lines would be added
 * The issue scope becomes unclear
 * Human approval is required
 
+Codex should treat these as review guidance targets, not hard stop conditions:
+
+* 10 changed files
+* 300 added lines
+
+If the issue explicitly defines a broad implementation and allowed paths, Codex may exceed these targets while keeping
+the implementation focused on that issue.
+
 <!--
-差分が大きすぎる場合、不明確な要件がある場合、承認が必要な場合は停止する。
+禁止パス変更、不明確な要件、承認が必要な場合は停止する。
+差分量は停止条件ではなく review 目安として扱う。
 -->

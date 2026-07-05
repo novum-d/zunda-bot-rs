@@ -1,6 +1,7 @@
 use crate::models::common::Data;
 use crate::reminder::service::parse_stop_button_custom_id;
 use crate::reminder::ui::{self, ReminderUiAction};
+use crate::usecase::birth_reset_usecase::parse_webhook_reset_button_custom_id;
 use serenity::all::{
     ComponentInteraction, ComponentInteractionDataKind, CreateInteractionResponse,
     CreateInteractionResponseMessage, EditInteractionResponse,
@@ -12,6 +13,12 @@ pub async fn handle_component_interaction(
 ) -> anyhow::Result<bool> {
     if let Some(action) = ui::parse_reminder_ui_custom_id(&component.data.custom_id) {
         return handle_reminder_ui_interaction(data, component, action).await;
+    }
+
+    if let Some((guild_id, member_id)) =
+        parse_webhook_reset_button_custom_id(&component.data.custom_id)
+    {
+        return handle_birth_reset_interaction(data, component, guild_id, member_id).await;
     }
 
     let Some((guild_id, member_id)) = parse_stop_button_custom_id(&component.data.custom_id) else {
@@ -86,6 +93,43 @@ pub async fn handle_component_interaction(
         )
         .await?;
 
+    Ok(true)
+}
+
+async fn handle_birth_reset_interaction(
+    data: &Data,
+    component: &ComponentInteraction,
+    guild_id: i64,
+    member_id: i64,
+) -> anyhow::Result<bool> {
+    if i64::from(component.user.id) != member_id {
+        component
+            .create_response(
+                &data.discord_http,
+                CreateInteractionResponse::Message(
+                    CreateInteractionResponseMessage::new()
+                        .content("この操作は自分のみ使えるのだ")
+                        .ephemeral(true),
+                ),
+            )
+            .await?;
+        return Ok(true);
+    }
+
+    data.birth_reset_usecase
+        .reset_member_birth(guild_id, member_id)
+        .await?;
+
+    component
+        .create_response(
+            &data.discord_http,
+            CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .content("誕生日の通知登録を解除したのだ。")
+                    .components(Vec::new()),
+            ),
+        )
+        .await?;
     Ok(true)
 }
 

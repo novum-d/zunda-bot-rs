@@ -6,6 +6,7 @@ use crate::usecase::guild_update_usecase::GuildUpdateUsecase;
 use serenity::all::Http;
 use std::sync::Arc;
 
+#[derive(Clone)]
 pub struct Data {
     pub birth_list_usecase: BirthListUsecase,
     pub birth_signup_usecase: BirthSignupUsecase,

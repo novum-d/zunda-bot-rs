@@ -7,6 +7,7 @@ use serenity::all::{CreateEmbed, Http};
 use sqlx::PgPool;
 use std::sync::Arc;
 
+#[derive(Clone)]
 pub struct BirthSignupUsecase {
     guild_repo: GuildRepository,
     reminder_service: crate::reminder::service::ReminderService,
@@ -38,23 +39,6 @@ impl BirthSignupUsecase {
         // 以降の応答は defer してから行う必要がある。
         poise_ctx.defer_ephemeral().await?;
 
-        let birth = NaiveDate::parse_from_str(&format!("2000/{input_birth}"), "%Y/%m/%d");
-        if birth.is_err() {
-            // 誕生日の入力フォーマットが無効
-            poise_ctx
-                .send(
-                    CreateReply::default()
-                        .embed(
-                            CreateEmbed::new()
-                                .title("🚨  誕生日が正しいフォーマットで入力されていないのだ。")
-                                .color(EMBED_COLOR_ERROR), // 異常系の色
-                        )
-                        .ephemeral(true),
-                )
-                .await?;
-            return Ok(());
-        }
-
         // コマンドが実行されたギルドのギルドIDを取得
         let guild_id = self
             .guild_repo
@@ -69,10 +53,28 @@ impl BirthSignupUsecase {
         // コマンドを実行したメンバーのメンバーIDを取得;
         let member_id = i64::from(poise_ctx.author().id);
 
-        // 初回参加メンバーでも登録できるよう、対象レコードを事前に作成しておく
-        self.guild_repo
-            .add_guild(guild_id, Some(guild_name.as_str()))
+        let result = self
+            .register_birth(guild_id, Some(guild_name.as_str()), member_id, &input_birth)
             .await?;
+        poise_ctx.send(result.into_reply()).await?;
+
+        Ok(())
+    }
+
+    pub async fn register_birth(
+        &self,
+        guild_id: i64,
+        guild_name: Option<&str>,
+        member_id: i64,
+        input_birth: &str,
+    ) -> anyhow::Result<BirthSignupResult> {
+        let Ok(birth) = NaiveDate::parse_from_str(&format!("2000/{input_birth}"), "%Y/%m/%d")
+        else {
+            return Ok(BirthSignupResult::InvalidFormat);
+        };
+
+        // 初回参加メンバーでも登録できるよう、対象レコードを事前に作成しておく
+        self.guild_repo.add_guild(guild_id, guild_name).await?;
         self.guild_repo
             .add_member(guild_id, member_id, None)
             .await?;
@@ -87,7 +89,7 @@ impl BirthSignupUsecase {
             // メンバー情報に誕生日が存在しない
             // guild_memberテーブルのメンバーIDに一致するにメンバーの誕生日を更新
             self.guild_repo
-                .update_member_birth(guild_id, member_id, birth?)
+                .update_member_birth(guild_id, member_id, birth)
                 .await?;
 
             if let Err(e) = self
@@ -103,36 +105,68 @@ impl BirthSignupUsecase {
                 );
             }
 
-            // 「誕生日通知の登録が完了したこと」をメッセージで通知
-            poise_ctx
-                .send(
-                    CreateReply::default()
-                        .embed(
-                            CreateEmbed::new()
-                                .title("✅  誕生日の通知登録が完了したのだ。")
-                                .color(EMBED_COLOR_SUCCESS), // 正常系の色
-                        )
-                        .content("登録した日付の正午（12:00）に誕生日が通知されるのだ。")
-                        .ephemeral(true),
-                )
-                .await?;
+            Ok(BirthSignupResult::Registered)
         } else {
-            // メンバー情報に誕生日が存在する
-            // 「すでに誕生日通知が登録済であること」をメッセージで通知
-            poise_ctx
-                .send(
-                    CreateReply::default()
-                        .embed(
-                            CreateEmbed::new()
-                                .title("⚠️ 誕生日はすでに登録済みなのだ")
-                                .color(EMBED_COLOR_WARNING), // 警告系の色
-                        )
-                        .ephemeral(true),
-                )
-                .await?;
+            Ok(BirthSignupResult::AlreadyRegistered)
         }
+    }
+}
 
-        Ok(())
+pub enum BirthSignupResult {
+    InvalidFormat,
+    Registered,
+    AlreadyRegistered,
+}
+
+impl BirthSignupResult {
+    pub fn into_reply(self) -> CreateReply {
+        match self {
+            Self::InvalidFormat => CreateReply::default()
+                .embed(
+                    CreateEmbed::new()
+                        .title("🚨  誕生日が正しいフォーマットで入力されていないのだ。")
+                        .color(EMBED_COLOR_ERROR),
+                )
+                .ephemeral(true),
+            Self::Registered => CreateReply::default()
+                .embed(
+                    CreateEmbed::new()
+                        .title("✅  誕生日の通知登録が完了したのだ。")
+                        .color(EMBED_COLOR_SUCCESS),
+                )
+                .content("登録した日付の正午（12:00）に誕生日が通知されるのだ。")
+                .ephemeral(true),
+            Self::AlreadyRegistered => CreateReply::default()
+                .embed(
+                    CreateEmbed::new()
+                        .title("⚠️ 誕生日はすでに登録済みなのだ")
+                        .color(EMBED_COLOR_WARNING),
+                )
+                .ephemeral(true),
+        }
+    }
+
+    pub fn title(&self) -> &'static str {
+        match self {
+            Self::InvalidFormat => "🚨  誕生日が正しいフォーマットで入力されていないのだ。",
+            Self::Registered => "✅  誕生日の通知登録が完了したのだ。",
+            Self::AlreadyRegistered => "⚠️ 誕生日はすでに登録済みなのだ",
+        }
+    }
+
+    pub fn color(&self) -> u32 {
+        match self {
+            Self::InvalidFormat => EMBED_COLOR_ERROR,
+            Self::Registered => EMBED_COLOR_SUCCESS,
+            Self::AlreadyRegistered => EMBED_COLOR_WARNING,
+        }
+    }
+
+    pub fn content(&self) -> Option<&'static str> {
+        match self {
+            Self::Registered => Some("登録した日付の正午（12:00）に誕生日が通知されるのだ。"),
+            Self::InvalidFormat | Self::AlreadyRegistered => None,
+        }
     }
 }
 
