@@ -213,15 +213,18 @@ jobs:
         run: cargo fmt --check
 
       - name: Check meaningful changes
+        id: meaningful_changes
         run: |
-          if git diff --name-only | grep -v ".codex" | grep -q .; then
-            echo "Valid changes"
-          else
+          if git diff --quiet -- . ':(exclude).codex'; then
             echo "No meaningful changes"
-            exit 1
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Valid changes"
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Require implementation file changes
+        if: steps.meaningful_changes.outputs.has_changes == 'true'
         run: |
           if [ "${{ steps.issue_type.outputs.requires_src_tests }}" = "true" ]; then
             if git diff --name-only | grep -qE '^(src/|tests/)'; then
