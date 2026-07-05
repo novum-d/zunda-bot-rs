@@ -59,7 +59,7 @@ Botをサーバーに追加する際に毎回認証を求められるので、`R
    cp .env.sample .env
    ```
 
-2.2. `.env` を開き、`1.1.`で作成したトークンと PostgreSQL の接続先を設定
+2.2. `.env` を開き、`1.1.`で作成したトークン、Discord Developer Portal の Public Key、PostgreSQL の接続先を設定
 
    ```dotenv
    DISCORD_TOKEN="{{Your token}}"
@@ -79,7 +79,7 @@ cargo run
 
 ```shell
 docker build -t zunda-bot-rs .
-docker run --env DISCORD_TOKEN --env DATABASE_URL -p 8080:8080 zunda-bot-rs
+docker run --env DISCORD_TOKEN --env DISCORD_PUBLIC_KEY --env DATABASE_URL -p 8080:8080 zunda-bot-rs
 ```
 
 ### 5. Cloud Run へのデプロイ
@@ -125,6 +125,7 @@ gcloud auth configure-docker {{REGION}}-docker.pkg.dev
 5.5. 外部 PostgreSQL（例: Neon）を用意し、`DATABASE_URL` を取得
 
 Cloud Run はコンテナ内に永続DBを持てないため、`DATABASE_URL` は外部のマネージド PostgreSQL を指定します。
+Discord の Interactions Endpoint を使うため、Discord Developer Portal の General Information に表示される Public Key を `DISCORD_PUBLIC_KEY` として設定します。
 
 5.6. Secret Manager に機密情報を登録
 
@@ -144,11 +145,13 @@ gcloud builds submit --tag {{REGION}}-docker.pkg.dev/{{PROJECT_ID}}/{{REPOSITORY
 gcloud run deploy zunda-bot-rs \
   --image {{REGION}}-docker.pkg.dev/{{PROJECT_ID}}/{{REPOSITORY}}/zunda-bot-rs \
   --region {{REGION}} \
+  --allow-unauthenticated \
+  --set-env-vars DISCORD_PUBLIC_KEY={{DISCORD_PUBLIC_KEY}},ENABLE_DISCORD_BOT=true \
   --set-secrets DISCORD_TOKEN={{DISCORD_TOKEN_SECRET}}:latest,DATABASE_URL={{DATABASE_URL_SECRET}}:latest
 ```
 
 Cloud Run の起動確認用に、コンテナは `PORT` 環境変数のポートで HTTP 200 を返します。
-Discord Developer Portal の Interactions Endpoint URL には `https://{{SERVICE_URL}}/interactions` を指定できます。`POST /interactions` は Discord の `X-Signature-Ed25519` / `X-Signature-Timestamp` を `DISCORD_PUBLIC_KEY` で検証し、PING interaction に応答します。
+Discord Developer Portal の Interactions Endpoint URL には `https://{{SERVICE_URL}}/interactions` を指定できます。`POST /interactions` は Discord の `X-Signature-Ed25519` / `X-Signature-Timestamp` を `DISCORD_PUBLIC_KEY` で検証し、PING interaction に応答します。`DISCORD_PUBLIC_KEY` が未設定の場合、署名検証ができないため Discord の interaction は利用できません。Cloud Run が未認証アクセスを拒否している場合も、Discord から検証リクエストを送れないため登録に失敗します。
 誕生日未登録リマインドは、送信時に `ずんだぼっと` という名前のテキストチャンネルを探します。存在しない場合は Bot が自動作成します。
 誕生日未登録リマインドを送信するには、`guild_member.is_admin` が `true` の管理者ユーザーが通知先にしたい Discord サーバーで `/setup reminder-channel` を実行します。この設定が完了するまで、ユーザーにはリマインド通知を送信しません。管理者コマンドの応答はエフェメラルで表示し、コマンド実行後は対象ユーザーをページング付きセレクトで選択して、選択したユーザーへ順次リマインドを送信できます。
 定期スキャンは、Cloud Scheduler などから `POST /internal/reminder/scan` を呼び出します。
@@ -168,6 +171,15 @@ gcloud run services update zunda-bot-rs \
   --region asia-northeast1 \
   --min-instances=1 \
   --no-cpu-throttling
+```
+
+デプロイ済みサービスに Public Key だけを追加または更新する場合は、`GCP_PROJECT_ID` / `GCP_REGION` / `DISCORD_PUBLIC_KEY` を設定してから以下を実行します。
+
+```shell
+gcloud run services update zunda-bot-rs \
+  --project "${GCP_PROJECT_ID}" \
+  --region "${GCP_REGION}" \
+  --update-env-vars DISCORD_PUBLIC_KEY="${DISCORD_PUBLIC_KEY}",ENABLE_DISCORD_BOT=true
 ```
 
 5.10. 設定が反映されたことを確認
