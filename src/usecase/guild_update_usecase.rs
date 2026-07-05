@@ -8,6 +8,7 @@ use sqlx::PgPool;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+#[derive(Clone)]
 pub struct GuildUpdateUsecase {
     guild_repo: GuildRepository,
 }

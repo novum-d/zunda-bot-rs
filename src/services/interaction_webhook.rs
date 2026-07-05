@@ -1,0 +1,571 @@
+use crate::handler::interaction::handle_component_interaction;
+use crate::models::common::Data;
+use crate::reminder::ui;
+use crate::res::colors::EMBED_COLOR_WARNING;
+use crate::usecase::birth_list_usecase::BirthListView;
+use crate::usecase::birth_reset_usecase::webhook_reset_button_custom_id;
+use crate::usecase::birth_signup_usecase::BirthSignupResult;
+use anyhow::Context as _;
+use serde::Deserialize;
+use serde_json::{json, Value};
+use serenity::all::{GuildId, Interaction};
+
+const INTERACTION_TYPE_PING: u8 = 1;
+const INTERACTION_TYPE_APPLICATION_COMMAND: u8 = 2;
+const INTERACTION_TYPE_COMPONENT: u8 = 3;
+const INTERACTION_TYPE_MODAL_SUBMIT: u8 = 5;
+const RESPONSE_TYPE_PONG: u8 = 1;
+const RESPONSE_TYPE_CHANNEL_MESSAGE: u8 = 4;
+const RESPONSE_TYPE_MODAL: u8 = 9;
+const EPHEMERAL_FLAG: u64 = 64;
+const BIRTH_SIGNUP_MODAL_ID: &str = "birth_signup";
+const BIRTH_SIGNUP_INPUT_ID: &str = "birth_input";
+
+pub struct WebhookHttpResponse {
+    pub status: u16,
+    pub body: String,
+}
+
+impl WebhookHttpResponse {
+    pub fn json(status: u16, body: Value) -> Self {
+        Self {
+            status,
+            body: body.to_string(),
+        }
+    }
+
+    pub fn empty(status: u16) -> Self {
+        Self {
+            status,
+            body: String::new(),
+        }
+    }
+}
+
+pub async fn handle_interaction_body(
+    data: Option<&Data>,
+    body: &[u8],
+) -> anyhow::Result<WebhookHttpResponse> {
+    let interaction = serde_json::from_slice::<DiscordInteraction>(body)
+        .context("Discord interaction JSON parse failed")?;
+
+    match interaction.interaction_type {
+        INTERACTION_TYPE_PING => Ok(WebhookHttpResponse::json(
+            200,
+            json!({ "type": RESPONSE_TYPE_PONG }),
+        )),
+        INTERACTION_TYPE_APPLICATION_COMMAND => {
+            let data = data.context("interaction handler is disabled")?;
+            handle_application_command(data, interaction).await
+        }
+        INTERACTION_TYPE_COMPONENT => {
+            let data = data.context("interaction handler is disabled")?;
+            handle_component(data, body).await
+        }
+        INTERACTION_TYPE_MODAL_SUBMIT => {
+            let data = data.context("interaction handler is disabled")?;
+            handle_modal_submit(data, interaction).await
+        }
+        _ => Ok(WebhookHttpResponse::json(
+            400,
+            json!({ "error": "unsupported interaction type" }),
+        )),
+    }
+}
+
+async fn handle_application_command(
+    data: &Data,
+    interaction: DiscordInteraction,
+) -> anyhow::Result<WebhookHttpResponse> {
+    let guild_id = interaction.guild_id;
+    let member_id = interaction.user_id();
+    let command_data = interaction
+        .data
+        .context("application command data missing")?;
+    let route = ApplicationCommandRoute::from_command_data(&command_data)
+        .context("unsupported application command")?;
+
+    match route {
+        ApplicationCommandRoute::Hello => Ok(discord_response(message("こんにちは、なのだ!"))),
+        ApplicationCommandRoute::BirthList => {
+            if let Err(e) = data.guild_update_usecase.invoke().await {
+                tracing::warn!("Guild sync failed before webhook birth list: {}", e);
+            }
+
+            let guild_id = guild_id.context("guild id missing")?;
+            let view = data
+                .birth_list_usecase
+                .build_view(GuildId::new(u64::try_from(guild_id)?))
+                .await?;
+            Ok(discord_response(birth_list_message(&view)))
+        }
+        ApplicationCommandRoute::BirthSignup => Ok(discord_response(signup_modal())),
+        ApplicationCommandRoute::BirthReset => {
+            let guild_id = guild_id.context("guild id missing")?;
+            let member_id = member_id.context("user id missing")?;
+            let view = data
+                .birth_reset_usecase
+                .build_confirmation_view(guild_id, Some(&format!("guild-{guild_id}")), member_id)
+                .await?;
+            if view.has_birth {
+                Ok(discord_response(birth_reset_confirmation_message(
+                    guild_id, member_id,
+                )))
+            } else {
+                Ok(discord_response(embed_message(
+                    "⚠️ 誕生日が登録されていないのだ",
+                    EMBED_COLOR_WARNING,
+                )))
+            }
+        }
+        ApplicationCommandRoute::BirthRemindResume => {
+            let guild_id = guild_id.context("guild id missing")?;
+            let member_id = member_id.context("user id missing")?;
+            data.reminder_service
+                .resume_reminder(guild_id, member_id)
+                .await?;
+            Ok(discord_response(message("リマインドを再開したのだ！")))
+        }
+        ApplicationCommandRoute::SetupReminderChannel => {
+            let guild_id = guild_id.context("guild id missing")?;
+            let member_id = member_id.context("user id missing")?;
+            if !data.reminder_service.is_admin_member(member_id).await? {
+                return Ok(discord_response(message(
+                    "このコマンドを実行する権限がないのだ。",
+                )));
+            }
+
+            if let Err(e) = data.guild_update_usecase.invoke().await {
+                tracing::warn!("Guild sync failed before webhook reminder setup: {}", e);
+            }
+
+            let session_id = data
+                .reminder_service
+                .create_selection_session(member_id, guild_id)?;
+            Ok(discord_response(setup_reminder_channel_message(
+                member_id,
+                guild_id,
+                &session_id,
+            )))
+        }
+        ApplicationCommandRoute::SetupAddNotificationChannel => {
+            manage_notification_channel(data, guild_id, member_id, &command_data, true).await
+        }
+        ApplicationCommandRoute::SetupRemoveNotificationChannel => {
+            manage_notification_channel(data, guild_id, member_id, &command_data, false).await
+        }
+    }
+}
+
+async fn handle_component(data: &Data, body: &[u8]) -> anyhow::Result<WebhookHttpResponse> {
+    let interaction = serde_json::from_slice::<Interaction>(body)
+        .context("Discord component interaction JSON parse failed")?;
+    let Interaction::Component(component) = interaction else {
+        anyhow::bail!("interaction payload was not a component");
+    };
+
+    match handle_component_interaction(data, &component).await {
+        Ok(true) => Ok(WebhookHttpResponse::empty(204)),
+        Ok(false) => Ok(WebhookHttpResponse::json(
+            400,
+            json!({ "error": "unsupported component interaction" }),
+        )),
+        Err(e) => Err(e),
+    }
+}
+
+async fn handle_modal_submit(
+    data: &Data,
+    interaction: DiscordInteraction,
+) -> anyhow::Result<WebhookHttpResponse> {
+    let guild_id = interaction.guild_id.context("guild id missing")?;
+    let member_id = interaction.user_id().context("user id missing")?;
+    let command_data = interaction.data.context("modal submit data missing")?;
+    if command_data.custom_id.as_deref() != Some(BIRTH_SIGNUP_MODAL_ID) {
+        return Ok(WebhookHttpResponse::json(
+            400,
+            json!({ "error": "unsupported modal submit" }),
+        ));
+    }
+
+    let input_birth = command_data
+        .modal_text_value(BIRTH_SIGNUP_INPUT_ID)
+        .context("birth signup modal input missing")?;
+    let result = data
+        .birth_signup_usecase
+        .register_birth(
+            guild_id,
+            Some(&format!("guild-{guild_id}")),
+            member_id,
+            &input_birth,
+        )
+        .await?;
+    Ok(discord_response(signup_result_message(&result)))
+}
+
+async fn manage_notification_channel(
+    data: &Data,
+    guild_id: Option<i64>,
+    member_id: Option<i64>,
+    command_data: &ApplicationCommandData,
+    add: bool,
+) -> anyhow::Result<WebhookHttpResponse> {
+    let guild_id = guild_id.context("guild id missing")?;
+    let member_id = member_id.context("user id missing")?;
+    if !data.reminder_service.is_admin_member(member_id).await? {
+        return Ok(discord_response(message(
+            "このコマンドを実行する権限がないのだ。",
+        )));
+    }
+
+    let channel_id = command_data
+        .subcommand_option_value("channel")
+        .and_then(value_as_i64)
+        .context("channel option missing")?;
+
+    if add {
+        data.reminder_service
+            .add_notification_channel(guild_id, channel_id)
+            .await?;
+    } else {
+        data.reminder_service
+            .remove_notification_channel(guild_id, channel_id)
+            .await?;
+    }
+
+    let content = if add {
+        format!("<#{channel_id}> を通知チャンネルに追加したのだ！")
+    } else {
+        format!("<#{channel_id}> を通知チャンネルから削除したのだ！")
+    };
+    Ok(discord_response(message(&content)))
+}
+
+fn discord_response(body: Value) -> WebhookHttpResponse {
+    WebhookHttpResponse::json(200, body)
+}
+
+fn message(content: &str) -> Value {
+    json!({
+        "type": RESPONSE_TYPE_CHANNEL_MESSAGE,
+        "data": {
+            "content": content,
+            "flags": EPHEMERAL_FLAG
+        }
+    })
+}
+
+fn embed_message(title: &str, color: u32) -> Value {
+    json!({
+        "type": RESPONSE_TYPE_CHANNEL_MESSAGE,
+        "data": {
+            "embeds": [{ "title": title, "color": color }],
+            "flags": EPHEMERAL_FLAG
+        }
+    })
+}
+
+fn birth_list_message(view: &BirthListView) -> Value {
+    let mut embed = json!({
+        "title": view.title(),
+        "color": view.color()
+    });
+    if let Some(description) = view.description() {
+        embed["description"] = json!(description);
+    }
+
+    json!({
+        "type": RESPONSE_TYPE_CHANNEL_MESSAGE,
+        "data": {
+            "embeds": [embed],
+            "flags": EPHEMERAL_FLAG
+        }
+    })
+}
+
+fn signup_modal() -> Value {
+    json!({
+        "type": RESPONSE_TYPE_MODAL,
+        "data": {
+            "custom_id": BIRTH_SIGNUP_MODAL_ID,
+            "title": "誕生日の通知登録",
+            "components": [{
+                "type": 1,
+                "components": [{
+                    "type": 4,
+                    "custom_id": BIRTH_SIGNUP_INPUT_ID,
+                    "label": "自身の誕生日を入力するのだ",
+                    "style": 1,
+                    "placeholder": "02/01",
+                    "min_length": 5,
+                    "max_length": 5,
+                    "required": true
+                }]
+            }]
+        }
+    })
+}
+
+fn signup_result_message(result: &BirthSignupResult) -> Value {
+    let mut data = json!({
+        "embeds": [{
+            "title": result.title(),
+            "color": result.color()
+        }],
+        "flags": EPHEMERAL_FLAG
+    });
+    if let Some(content) = result.content() {
+        data["content"] = json!(content);
+    }
+
+    json!({
+        "type": RESPONSE_TYPE_CHANNEL_MESSAGE,
+        "data": data
+    })
+}
+
+fn birth_reset_confirmation_message(guild_id: i64, member_id: i64) -> Value {
+    json!({
+        "type": RESPONSE_TYPE_CHANNEL_MESSAGE,
+        "data": {
+            "content": "誕生日の通知登録を解除するのだ⚠️",
+            "flags": EPHEMERAL_FLAG,
+            "components": [{
+                "type": 1,
+                "components": [{
+                    "type": 2,
+                    "custom_id": webhook_reset_button_custom_id(guild_id, member_id),
+                    "label": "解除",
+                    "style": 4
+                }]
+            }]
+        }
+    })
+}
+
+fn setup_reminder_channel_message(member_id: i64, guild_id: i64, session_id: &str) -> Value {
+    json!({
+        "type": RESPONSE_TYPE_CHANNEL_MESSAGE,
+        "data": {
+            "content": "リマインドを送るユーザーを選ぶのだ！",
+            "flags": EPHEMERAL_FLAG,
+            "components": [{
+                "type": 1,
+                "components": [{
+                    "type": 2,
+                    "custom_id": ui::start_button_custom_id(member_id, guild_id, session_id),
+                    "label": "ユーザーを選ぶのだ",
+                    "style": 1
+                }]
+            }]
+        }
+    })
+}
+
+fn value_as_i64(value: &Value) -> Option<i64> {
+    value
+        .as_i64()
+        .or_else(|| value.as_u64().and_then(|value| i64::try_from(value).ok()))
+        .or_else(|| value.as_str()?.parse::<i64>().ok())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApplicationCommandRoute {
+    Hello,
+    BirthList,
+    BirthSignup,
+    BirthReset,
+    BirthRemindResume,
+    SetupReminderChannel,
+    SetupAddNotificationChannel,
+    SetupRemoveNotificationChannel,
+}
+
+impl ApplicationCommandRoute {
+    fn from_command_data(data: &ApplicationCommandData) -> Option<Self> {
+        match data.name.as_str() {
+            "hello" => Some(Self::Hello),
+            "birth" => match data.options.first()?.name.as_str() {
+                "list" => Some(Self::BirthList),
+                "signup" => Some(Self::BirthSignup),
+                "reset" => Some(Self::BirthReset),
+                "remind" => {
+                    let nested = data.options.first()?.options.first()?;
+                    (nested.name == "resume").then_some(Self::BirthRemindResume)
+                }
+                _ => None,
+            },
+            "setup" => match data.options.first()?.name.as_str() {
+                "reminder-channel" => Some(Self::SetupReminderChannel),
+                "add-notification-channel" => Some(Self::SetupAddNotificationChannel),
+                "remove-notification-channel" => Some(Self::SetupRemoveNotificationChannel),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct DiscordInteraction {
+    #[serde(rename = "type")]
+    interaction_type: u8,
+    #[serde(default, deserialize_with = "deserialize_optional_i64")]
+    guild_id: Option<i64>,
+    member: Option<InteractionMember>,
+    user: Option<InteractionUser>,
+    data: Option<ApplicationCommandData>,
+}
+
+impl DiscordInteraction {
+    fn user_id(&self) -> Option<i64> {
+        self.member
+            .as_ref()
+            .and_then(|member| member.user.as_ref())
+            .map(|user| user.id)
+            .or_else(|| self.user.as_ref().map(|user| user.id))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct InteractionMember {
+    user: Option<InteractionUser>,
+}
+
+#[derive(Debug, Deserialize)]
+struct InteractionUser {
+    #[serde(deserialize_with = "deserialize_i64")]
+    id: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApplicationCommandData {
+    name: String,
+    #[serde(default)]
+    custom_id: Option<String>,
+    #[serde(default)]
+    options: Vec<ApplicationCommandOption>,
+    #[serde(default)]
+    components: Vec<ModalActionRow>,
+}
+
+impl ApplicationCommandData {
+    fn subcommand_option_value(&self, option_name: &str) -> Option<&Value> {
+        self.options
+            .first()?
+            .options
+            .iter()
+            .find(|option| option.name == option_name)?
+            .value
+            .as_ref()
+    }
+
+    fn modal_text_value(&self, custom_id: &str) -> Option<String> {
+        self.components
+            .iter()
+            .flat_map(|row| row.components.iter())
+            .find(|component| component.custom_id == custom_id)?
+            .value
+            .clone()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ApplicationCommandOption {
+    name: String,
+    #[serde(default)]
+    value: Option<Value>,
+    #[serde(default)]
+    options: Vec<ApplicationCommandOption>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModalActionRow {
+    #[serde(default)]
+    components: Vec<ModalComponent>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModalComponent {
+    custom_id: String,
+    value: Option<String>,
+}
+
+fn deserialize_optional_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    value
+        .map(|value| {
+            value_as_i64(&value).ok_or_else(|| serde::de::Error::custom("invalid integer value"))
+        })
+        .transpose()
+}
+
+fn deserialize_i64<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    value_as_i64(&value).ok_or_else(|| serde::de::Error::custom("invalid integer value"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn command_data(body: &str) -> ApplicationCommandData {
+        serde_json::from_str::<DiscordInteraction>(body)
+            .expect("interaction should parse")
+            .data
+            .expect("command data should exist")
+    }
+
+    #[test]
+    fn routes_hello_command() {
+        let data = command_data(r#"{"type":2,"data":{"name":"hello","options":[]}}"#);
+
+        assert_eq!(
+            ApplicationCommandRoute::from_command_data(&data),
+            Some(ApplicationCommandRoute::Hello)
+        );
+    }
+
+    #[test]
+    fn routes_nested_birth_remind_resume_command() {
+        let data = command_data(
+            r#"{"type":2,"data":{"name":"birth","options":[{"name":"remind","options":[{"name":"resume"}]}]}}"#,
+        );
+
+        assert_eq!(
+            ApplicationCommandRoute::from_command_data(&data),
+            Some(ApplicationCommandRoute::BirthRemindResume)
+        );
+    }
+
+    #[test]
+    fn reads_channel_option_from_setup_subcommand() {
+        let data = command_data(
+            r#"{"type":2,"data":{"name":"setup","options":[{"name":"add-notification-channel","options":[{"name":"channel","value":"123"}]}]}}"#,
+        );
+
+        assert_eq!(
+            data.subcommand_option_value("channel")
+                .and_then(value_as_i64),
+            Some(123)
+        );
+    }
+
+    #[test]
+    fn reads_birth_signup_modal_value() {
+        let data = command_data(
+            r#"{"type":5,"data":{"name":"","custom_id":"birth_signup","components":[{"components":[{"custom_id":"birth_input","value":"02/01"}]}]}}"#,
+        );
+
+        assert_eq!(
+            data.modal_text_value(BIRTH_SIGNUP_INPUT_ID),
+            Some("02/01".to_string())
+        );
+    }
+}

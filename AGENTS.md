@@ -9,11 +9,13 @@ This repository uses Codex to automate:
 3. Draft PR creation
 4. Human review and merge
 
-Codex must prioritize safety, small changes, low token usage, and minimal blast radius.
+Codex must prioritize safety, focused changes, and minimal blast radius. Small changes are preferred, but Codex may
+complete larger implementation issues when the issue explicitly defines the broad scope and allowed paths.
 
 <!--
 このリポジトリでは Codex を使って Issue → 実装 → Draft PR 作成までを自動化する。
-安全性・小さな差分・低トークン消費・限定的な変更範囲を最優先とする。
+安全性・焦点の合った差分・限定的な変更範囲を最優先とする。
+Issue が広い scope と変更許可パスを明示している場合は、大きめの実装も完了まで進めてよい。
 -->
 
 ---
@@ -128,7 +130,7 @@ Codex should prefer:
 * Small refactors
 * Small CI improvements
 
-Codex should avoid:
+Codex should avoid unless the issue explicitly requires a larger implementation:
 
 * Large architectural changes
 * Multi-directory refactors
@@ -139,7 +141,7 @@ Codex should avoid:
 
 <!--
 小規模修正・ログ改善・テスト追加・README 修正などを優先する。
-大規模設計変更や複数機能をまとめた PR は避ける。
+Issue で明示されていない大規模設計変更や複数機能をまとめた PR は避ける。
 -->
 
 ---
@@ -192,26 +194,25 @@ disown
 破壊的コマンド、権限昇格、バックグラウンド実行は禁止。
 -->
 
-<!--
+## PR Size Guidance
 
----
+Codex should keep changes as small as the issue reasonably allows.
 
-## PR Size Limits
-
-Codex must keep changes small.
-
-Maximum allowed limits:
+The following are review guidance targets, not hard stop conditions:
 
 ```yaml id="u2k8cd"
-max_changed_files: 10
-max_added_lines: 300
-max_deleted_lines: 150
+preferred_max_changed_files: 10
+preferred_max_added_lines: 300
+preferred_max_deleted_lines: 150
 ```
 
-If a task exceeds these limits, Codex should stop and request the work be split into smaller issues.
+If an issue explicitly asks for a broad implementation and lists the allowed paths, Codex may exceed these targets.
+When exceeding them, Codex must keep the work focused on the issue, avoid unrelated refactors, and explain the larger
+scope in the PR limitations or work-intent section.
 
-変更ファイル数・追加行数・削除行数が多すぎる場合は停止し、Issue を分割すること。
-
+<!--
+変更ファイル数・追加行数・削除行数の目安は review しやすくするための推奨値であり、停止条件ではない。
+Issue が広い実装と変更許可パスを明示している場合は、目安を超えてもよい。
 -->
 
 ---
@@ -316,14 +317,14 @@ main への直接 push・自動 merge・force push は禁止。
 
 Codex should stop work if:
 
-* More than 15 minutes have elapsed
-* More than 10 files would be changed
-* More than 300 lines would be added
+* The workflow time budget is close to expiring and no coherent implementation can be completed
 * The scope becomes unclear
 * Human approval is required
+* The required implementation would touch forbidden paths that the issue did not explicitly approve
 
 <!--
-時間超過・差分超過・不明確な要件・人間承認が必要な場合は停止する。
+時間切れが近い場合、不明確な要件、人間承認が必要な場合、または未承認の禁止パス変更が必要な場合は停止する。
+差分量だけを理由に停止しない。
 -->
 
 ---

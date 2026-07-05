@@ -4,10 +4,11 @@ use crate::res::colors::{EMBED_COLOR_SUCCESS, EMBED_COLOR_WARNING};
 use chrono::Datelike;
 use poise::futures_util::future::join_all;
 use poise::CreateReply;
-use serenity::all::{CreateEmbed, Http};
+use serenity::all::{CreateEmbed, GuildId, Http};
 use sqlx::PgPool;
 use std::sync::Arc;
 
+#[derive(Clone)]
 pub struct BirthListUsecase {
     guild_repo: GuildRepository,
     http: Arc<Http>,
@@ -29,6 +30,13 @@ impl BirthListUsecase {
             .fetch_guild_id_from_command(poise_ctx)
             .await?;
 
+        let view = self.build_view(guild_id).await?;
+        poise_ctx.send(view.into_reply()).await?;
+
+        Ok(())
+    }
+
+    pub async fn build_view(&self, guild_id: GuildId) -> anyhow::Result<BirthListView> {
         // ギルドIDに一致するメンバー情報リストをguild_memberテーブルから取得
         let mut members = self
             .guild_repo
@@ -39,15 +47,9 @@ impl BirthListUsecase {
             .filter(|member| member.birth.is_some())
             .collect::<Vec<_>>();
 
-        let reply = if members.is_empty() {
+        if members.is_empty() {
             // 「誕生日通知を登録しているメンバーがいないこと」をメッセージで通知
-            CreateReply::default()
-                .embed(
-                    CreateEmbed::new()
-                        .title("⚠️ 誕生日が登録されていないのだ")
-                        .color(EMBED_COLOR_WARNING), // 警告系の色
-                )
-                .ephemeral(true)
+            Ok(BirthListView::Empty)
         } else {
             // メンバー情報リストが誕生日の降順になるようにソート
             members.sort_by_key(|m| m.birth.map(|b| (b.month(), b.day())));
@@ -69,17 +71,57 @@ impl BirthListUsecase {
                 .into_iter()
                 .flatten()
                 .collect::<Vec<_>>();
-            CreateReply::default()
+            Ok(BirthListView::List {
+                description: birth_list.join(""),
+            })
+        }
+    }
+}
+
+pub enum BirthListView {
+    Empty,
+    List { description: String },
+}
+
+impl BirthListView {
+    pub fn into_reply(self) -> CreateReply {
+        match self {
+            Self::Empty => CreateReply::default()
+                .embed(
+                    CreateEmbed::new()
+                        .title("⚠️ 誕生日が登録されていないのだ")
+                        .color(EMBED_COLOR_WARNING),
+                )
+                .ephemeral(true),
+            Self::List { description } => CreateReply::default()
                 .embed(
                     CreateEmbed::new()
                         .title("🎉 誕生日リスト")
-                        .description(birth_list.join(""))
-                        .color(EMBED_COLOR_SUCCESS), // 正常系の色
+                        .description(description)
+                        .color(EMBED_COLOR_SUCCESS),
                 )
-                .ephemeral(true)
-        };
-        poise_ctx.send(reply).await?;
+                .ephemeral(true),
+        }
+    }
 
-        Ok(())
+    pub fn title(&self) -> &'static str {
+        match self {
+            Self::Empty => "⚠️ 誕生日が登録されていないのだ",
+            Self::List { .. } => "🎉 誕生日リスト",
+        }
+    }
+
+    pub fn color(&self) -> u32 {
+        match self {
+            Self::Empty => EMBED_COLOR_WARNING,
+            Self::List { .. } => EMBED_COLOR_SUCCESS,
+        }
+    }
+
+    pub fn description(&self) -> Option<&str> {
+        match self {
+            Self::Empty => None,
+            Self::List { description } => Some(description),
+        }
     }
 }
