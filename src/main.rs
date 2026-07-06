@@ -8,7 +8,7 @@ mod usecase;
 
 use crate::models::common::Data;
 use crate::reminder::service::ReminderService;
-use crate::services::healthcheck::run_healthcheck_server;
+use crate::services::healthcheck::{new_shared_data, run_healthcheck_server_with_shared_data};
 use crate::usecase::birth_list_usecase::BirthListUsecase;
 use crate::usecase::birth_notify_usecase::BirthNotifyUsecase;
 use crate::usecase::birth_reset_usecase::BirthResetUsecase;
@@ -37,6 +37,34 @@ async fn main() -> anyhow::Result<()> {
         subscriber.with_ansi(false).compact().init();
     }
 
+    let shared_data = new_shared_data();
+    let init_shared_data = shared_data.clone();
+    tokio::spawn(async move {
+        match initialize_data().await {
+            Ok(data) => {
+                match init_shared_data.write() {
+                    Ok(mut guard) => {
+                        *guard = Some(data.clone());
+                    }
+                    Err(_) => {
+                        tracing::error!("shared data lock poisoned before publishing app data");
+                        return;
+                    }
+                }
+                run_startup_tasks(data).await;
+            }
+            Err(e) => {
+                tracing::error!("Application initialization failed: {:?}", e);
+            }
+        }
+    });
+
+    run_healthcheck_server_with_shared_data(shared_data)
+        .await
+        .context("Healthcheck server stopped")
+}
+
+async fn initialize_data() -> anyhow::Result<Data> {
     let database_url = env::var("DATABASE_URL").context("'DATABASE_URL' was not found")?;
     let pool = PgPoolOptions::new()
         .max_connections(5)
@@ -59,13 +87,7 @@ async fn main() -> anyhow::Result<()> {
     let guild_update_usecase = GuildUpdateUsecase::new(pool.clone(), http.clone())?;
     let reminder_service = ReminderService::new(pool.clone(), http.clone())?;
 
-    guild_update_usecase
-        .invoke()
-        .await
-        .context("Failed to sync guilds on startup")?;
-    register_global_commands(&http).await?;
-
-    let data = Data {
+    Ok(Data {
         birth_list_usecase,
         birth_signup_usecase,
         birth_reset_usecase,
@@ -73,11 +95,35 @@ async fn main() -> anyhow::Result<()> {
         guild_update_usecase,
         reminder_service,
         discord_http: http,
-    };
+    })
+}
 
-    run_healthcheck_server(data)
+async fn run_startup_tasks(data: Data) {
+    if let Err(e) = data.guild_update_usecase.invoke().await {
+        tracing::error!("Failed to sync guilds on startup: {:?}", e);
+    }
+
+    if let Err(e) = ensure_application_id(&data.discord_http).await {
+        tracing::error!("Failed to resolve Discord application id: {:?}", e);
+        return;
+    }
+
+    if let Err(e) = register_global_commands(&data.discord_http).await {
+        tracing::error!("Failed to register global slash commands: {:?}", e);
+    }
+}
+
+async fn ensure_application_id(http: &Http) -> anyhow::Result<()> {
+    if http.application_id().is_some() {
+        return Ok(());
+    }
+
+    let application = http
+        .get_current_application_info()
         .await
-        .context("Healthcheck server stopped")
+        .context("Failed to fetch current Discord application info")?;
+    http.set_application_id(application.id);
+    Ok(())
 }
 
 async fn register_global_commands(http: &Http) -> anyhow::Result<()> {

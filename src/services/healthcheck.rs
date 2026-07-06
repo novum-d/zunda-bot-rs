@@ -3,6 +3,7 @@ use crate::services::interaction_webhook::{handle_interaction_body, WebhookHttpR
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use std::env;
 use std::str;
+use std::sync::{Arc, RwLock};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -10,13 +11,22 @@ use tokio::net::{TcpListener, TcpStream};
 const DISCORD_PUBLIC_KEY_ENV: &str = "DISCORD_PUBLIC_KEY";
 const MAX_REQUEST_BYTES: usize = 64 * 1024;
 
-pub async fn run_healthcheck_server(data: Data) -> anyhow::Result<()> {
-    let port = env::var("PORT").unwrap_or_else(|_| "8080".to_string());
-    let port: u16 = port.parse()?;
-    run_healthcheck_server_on(port, Some(data)).await
+pub type SharedData = Arc<RwLock<Option<Data>>>;
+
+pub fn new_shared_data() -> SharedData {
+    Arc::new(RwLock::new(None))
 }
 
-pub async fn run_healthcheck_server_on(port: u16, data: Option<Data>) -> anyhow::Result<()> {
+pub async fn run_healthcheck_server_with_shared_data(data: SharedData) -> anyhow::Result<()> {
+    let port = env::var("PORT").unwrap_or_else(|_| "8080".to_string());
+    let port: u16 = port.parse()?;
+    run_healthcheck_server_on_shared_data(port, data).await
+}
+
+pub async fn run_healthcheck_server_on_shared_data(
+    port: u16,
+    data: SharedData,
+) -> anyhow::Result<()> {
     let listener = TcpListener::bind(format!("0.0.0.0:{port}")).await?;
     tracing::info!("Healthcheck server listening on 0.0.0.0:{}", port);
 
@@ -36,6 +46,10 @@ pub async fn run_healthcheck_server_on(port: u16, data: Option<Data>) -> anyhow:
 
             let request_head = request_head_for_log(&request);
             tracing::debug!(%request_head, "received healthcheck request");
+            let data = data.read().map(|guard| guard.clone()).unwrap_or_else(|_| {
+                tracing::error!("shared data lock poisoned");
+                None
+            });
             let response = handle_request(&request, data.as_ref()).await;
             tracing::debug!(?response, "healthcheck response");
 
@@ -333,6 +347,18 @@ mod tests {
 
         assert!(response.starts_with("HTTP/1.1 400 Bad Request"));
         assert!(response.ends_with(r#"{"error":"unsupported interaction type"}"#));
+    }
+
+    #[tokio::test]
+    async fn discord_application_command_returns_starting_message_without_data() {
+        let request =
+            signed_interaction_request(r#"{"type":2,"data":{"name":"hello","options":[]}}"#);
+
+        let response = handle_request(request.as_bytes(), None).await;
+
+        assert!(response.starts_with("HTTP/1.1 200 OK"));
+        assert!(response.contains(r#""type":4"#));
+        assert!(response.contains("起動処理中なのだ"));
     }
 
     #[tokio::test]

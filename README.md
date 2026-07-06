@@ -164,13 +164,24 @@ gcloud run services logs read zunda-bot-rs \
   --limit=200
 ```
 
-5.9. Cloud Run の webhook 応答安定化のため、常時起動設定を行う
+5.9. 必要に応じて Cloud Run の常時起動設定を行う
+
+起動直後は先に HTTP サーバーを起動し、DB 接続、ギルド同期、slash command 登録はバックグラウンドで行います。Discord interaction は処理に時間がかかる場合、先に defer 応答してから followup を送るため、Cloud Run の常時起動は必須ではありません。
+
+初回アクセスの cold start レイテンシを抑えたい場合のみ、最小インスタンスを設定します。
 
 ```shell
 gcloud run services update zunda-bot-rs \
   --region asia-northeast1 \
-  --min-instances=1 \
-  --no-cpu-throttling
+  --min-instances=1
+```
+
+コストを優先して scale to zero に戻す場合は、最小インスタンスを 0 にします。
+
+```shell
+gcloud run services update zunda-bot-rs \
+  --region asia-northeast1 \
+  --min-instances=0
 ```
 
 デプロイ済みサービスに Public Key だけを追加または更新する場合は、`GCP_PROJECT_ID` / `GCP_REGION` / `DISCORD_PUBLIC_KEY` を設定してから以下を実行します。

@@ -4,11 +4,34 @@ start
 
 :環境変数とログ設定を読み込む;
 
+:共有Data状態を作成;
+:バックグラウンド初期化タスクを起動;
+
+:Healthcheck serverを起動;
+note right
+  通常のhealthcheckに加えて
+  POST /internal/reminder/scan で
+  誕生日未登録リマインドのスキャンを実行できる。
+  POST /internal/birthday/notify で
+  当日の誕生日通知を実行できる。
+  POST /interactions で
+  Discord Interaction webhookを受信できる。
+
+  初期化完了前のDiscord Interactionには
+  起動処理中のエフェメラル応答を返す。
+end note
+
+partition "バックグラウンド初期化タスク" {
 :DATABASE_URLでPostgreSQLへ接続;
 :マイグレーションを実行;
 :DISCORD_TOKENを読み込む;
 
 :各UsecaseとReminderServiceを初期化;
+:共有Data状態へDataを公開;
+note right
+  以降、内部APIとDiscord Interactionは
+  実ユースケースを実行できる。
+end note
 
 ' 初期更新処理
 
@@ -75,22 +98,13 @@ endwhile
 }
 ' ----------------------------------------------------
 
+:Discord REST APIでApplication IDを取得;
 :Discord REST APIでグローバルslash commandを登録;
 note right
   hello、birth、setupを登録する。
   birthはlist/signup/reset/remind resumeを持つ。
 end note
-
-:Healthcheck serverを起動;
-note right
-  通常のhealthcheckに加えて
-  POST /internal/reminder/scan で
-  誕生日未登録リマインドのスキャンを実行できる。
-  POST /internal/birthday/notify で
-  当日の誕生日通知を実行できる。
-  POST /interactions で
-  Discord Interaction webhookを受信できる。
-end note
+}
 
 stop
 
