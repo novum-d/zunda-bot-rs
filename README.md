@@ -149,7 +149,7 @@ gcloud run deploy zunda-bot-rs \
 ```
 
 Cloud Run の起動確認用に、コンテナは `PORT` 環境変数のポートで HTTP 200 を返します。
-Discord Developer Portal の Interactions Endpoint URL には `https://{{SERVICE_URL}}/interactions` を指定できます。`POST /interactions` は Discord の `X-Signature-Ed25519` / `X-Signature-Timestamp` を `DISCORD_PUBLIC_KEY` で検証し、PING interaction に応答します。`DISCORD_PUBLIC_KEY` が未設定の場合、署名検証ができないため Discord の interaction は利用できません。Cloud Run が未認証アクセスを拒否している場合も、Discord から検証リクエストを送れないため登録に失敗します。
+Discord Developer Portal の Interactions Endpoint URL には `https://{{SERVICE_URL}}/interactions` を指定できます。`POST /interactions` は Discord の `X-Signature-Ed25519` / `X-Signature-Timestamp` を `DISCORD_PUBLIC_KEY` で検証し、PING interaction に応答します。`DISCORD_PUBLIC_KEY` が未設定の場合は `DISCORD_TOKEN` で Discord API から application verify key を取得して検証します。Cloud Run が未認証アクセスを拒否している場合は、Discord から検証リクエストを送れないため登録に失敗します。
 Discord Gateway には接続せず、slash command と component interaction は `POST /interactions` で受信します。起動時の slash command 登録も Discord REST API で行います。
 誕生日未登録リマインドは、送信時に `ずんだぼっと` という名前のテキストチャンネルを探します。存在しない場合は Bot が自動作成します。
 誕生日未登録リマインドを送信するには、`guild_member.is_admin` が `true` の管理者ユーザーが通知先にしたい Discord サーバーで `/setup reminder-channel` を実行します。この設定が完了するまで、ユーザーにはリマインド通知を送信しません。管理者コマンドの応答はエフェメラルで表示し、コマンド実行後は対象ユーザーをページング付きセレクトで選択して、選択したユーザーへ順次リマインドを送信できます。

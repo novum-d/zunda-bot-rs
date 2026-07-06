@@ -1,15 +1,18 @@
 use crate::models::common::Data;
 use crate::services::interaction_webhook::{handle_interaction_body, WebhookHttpResponse};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use serenity::http::Http;
 use std::env;
 use std::str;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 const DISCORD_PUBLIC_KEY_ENV: &str = "DISCORD_PUBLIC_KEY";
+const DISCORD_TOKEN_ENV: &str = "DISCORD_TOKEN";
 const MAX_REQUEST_BYTES: usize = 64 * 1024;
+static DISCORD_PUBLIC_KEY_CACHE: OnceLock<[u8; 32]> = OnceLock::new();
 
 pub type SharedData = Arc<RwLock<Option<Data>>>;
 
@@ -134,7 +137,7 @@ async fn handle_request(request: &[u8], data: Option<&Data>) -> String {
 }
 
 async fn handle_discord_interaction(request: &HttpRequest<'_>, data: Option<&Data>) -> String {
-    if let Err(e) = verify_discord_signature(request) {
+    if let Err(e) = verify_discord_signature(request).await {
         tracing::warn!("Discord interaction signature verification failed: {}", e);
         return json_response(401, r#"{"error":"invalid request signature"}"#);
     }
@@ -150,20 +153,18 @@ async fn handle_discord_interaction(request: &HttpRequest<'_>, data: Option<&Dat
     webhook_response(response)
 }
 
-fn verify_discord_signature(request: &HttpRequest<'_>) -> Result<(), &'static str> {
-    let public_key = env::var(DISCORD_PUBLIC_KEY_ENV)
-        .map_err(|_| "DISCORD_PUBLIC_KEY is not configured")
-        .and_then(|value| decode_fixed_hex::<32>(value.trim()))?;
+async fn verify_discord_signature(request: &HttpRequest<'_>) -> Result<(), String> {
+    let public_key = resolve_discord_public_key().await?;
     let signature = request
         .header("X-Signature-Ed25519")
-        .ok_or("X-Signature-Ed25519 header is missing")
+        .ok_or_else(|| "X-Signature-Ed25519 header is missing".to_string())
         .and_then(decode_fixed_hex::<64>)?;
     let timestamp = request
         .header("X-Signature-Timestamp")
-        .ok_or("X-Signature-Timestamp header is missing")?;
+        .ok_or_else(|| "X-Signature-Timestamp header is missing".to_string())?;
 
     let verifying_key =
-        VerifyingKey::from_bytes(&public_key).map_err(|_| "public key is invalid")?;
+        VerifyingKey::from_bytes(&public_key).map_err(|_| "public key is invalid".to_string())?;
     let signature = Signature::from_bytes(&signature);
     let mut message = Vec::with_capacity(timestamp.len() + request.body.len());
     message.extend_from_slice(timestamp.as_bytes());
@@ -171,12 +172,47 @@ fn verify_discord_signature(request: &HttpRequest<'_>) -> Result<(), &'static st
 
     verifying_key
         .verify(&message, &signature)
-        .map_err(|_| "signature is invalid")
+        .map_err(|_| "signature is invalid".to_string())
 }
 
-fn decode_fixed_hex<const N: usize>(value: &str) -> Result<[u8; N], &'static str> {
+async fn resolve_discord_public_key() -> Result<[u8; 32], String> {
+    if let Some(public_key) = configured_discord_public_key()? {
+        return Ok(public_key);
+    }
+
+    if let Some(public_key) = DISCORD_PUBLIC_KEY_CACHE.get() {
+        return Ok(*public_key);
+    }
+
+    let token = env::var(DISCORD_TOKEN_ENV)
+        .map_err(|_| "DISCORD_PUBLIC_KEY and DISCORD_TOKEN are not configured".to_string())?;
+    let application = Http::new(&token)
+        .get_current_application_info()
+        .await
+        .map_err(|e| format!("failed to fetch Discord application info: {e}"))?;
+    let public_key = decode_fixed_hex::<32>(application.verify_key.trim())?;
+    let _ = DISCORD_PUBLIC_KEY_CACHE.set(public_key);
+    Ok(public_key)
+}
+
+fn configured_discord_public_key() -> Result<Option<[u8; 32]>, String> {
+    match env::var(DISCORD_PUBLIC_KEY_ENV) {
+        Ok(value) => decode_optional_public_key(Some(value.trim())),
+        Err(env::VarError::NotPresent) => Ok(None),
+        Err(env::VarError::NotUnicode(_)) => Err("DISCORD_PUBLIC_KEY is not unicode".to_string()),
+    }
+}
+
+fn decode_optional_public_key(value: Option<&str>) -> Result<Option<[u8; 32]>, String> {
+    value
+        .filter(|value| !value.is_empty())
+        .map(decode_fixed_hex::<32>)
+        .transpose()
+}
+
+fn decode_fixed_hex<const N: usize>(value: &str) -> Result<[u8; N], String> {
     let mut bytes = [0_u8; N];
-    hex::decode_to_slice(value, &mut bytes).map_err(|_| "hex value is invalid")?;
+    hex::decode_to_slice(value, &mut bytes).map_err(|_| "hex value is invalid".to_string())?;
     Ok(bytes)
 }
 
@@ -286,7 +322,8 @@ impl<'a> HttpRequest<'a> {
 #[cfg(test)]
 mod tests {
     use super::{
-        handle_request, json_response, request_is_complete, response_bytes, DISCORD_PUBLIC_KEY_ENV,
+        decode_optional_public_key, handle_request, json_response, request_is_complete,
+        response_bytes, DISCORD_PUBLIC_KEY_ENV,
     };
     use ed25519_dalek::{Signer, SigningKey};
     use std::env;
@@ -315,6 +352,22 @@ mod tests {
 
         assert!(!request_is_complete(partial));
         assert!(request_is_complete(complete));
+    }
+
+    #[test]
+    fn optional_public_key_accepts_missing_and_empty_values() {
+        assert_eq!(decode_optional_public_key(None).unwrap(), None);
+        assert_eq!(decode_optional_public_key(Some("")).unwrap(), None);
+    }
+
+    #[test]
+    fn optional_public_key_decodes_hex_value() {
+        let value = hex::encode([7_u8; 32]);
+
+        assert_eq!(
+            decode_optional_public_key(Some(&value)).unwrap(),
+            Some([7_u8; 32])
+        );
     }
 
     #[tokio::test]
