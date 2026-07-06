@@ -551,6 +551,7 @@ struct InteractionUser {
 
 #[derive(Debug, Deserialize)]
 struct ApplicationCommandData {
+    #[serde(default)]
     name: String,
     #[serde(default)]
     custom_id: Option<String>,
@@ -677,6 +678,20 @@ mod tests {
         assert_eq!(
             data.modal_text_value(BIRTH_SIGNUP_INPUT_ID),
             Some("02/01".to_string())
+        );
+    }
+
+    #[test]
+    fn parses_component_payload_without_command_name() {
+        let interaction = serde_json::from_str::<DiscordInteraction>(
+            r#"{"type":3,"data":{"custom_id":"birth_reset_confirm:1:2","component_type":2},"member":{"user":{"id":"2"}}}"#,
+        )
+        .expect("component interaction should parse without data.name");
+
+        assert_eq!(interaction.interaction_type, INTERACTION_TYPE_COMPONENT);
+        assert_eq!(
+            interaction.data.and_then(|data| data.custom_id),
+            Some("birth_reset_confirm:1:2".to_string())
         );
     }
 
