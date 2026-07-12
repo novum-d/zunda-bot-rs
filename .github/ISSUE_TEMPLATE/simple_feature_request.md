@@ -2,7 +2,7 @@
 name: 💡 簡単機能提案
 about: 新しい機能のアイデアがあれば、気軽にこちらからどうぞ！シンプルな新機能や改善案を提案するためのテンプレート
 title: '[💡 機能提案] <タイトル>'
-labels: 機能提案
+labels: 機能追加
 ---
 
 <!-- 関連するIssueや資料があればリンクを記載してください -->
@@ -19,3 +19,4 @@ labels: 機能提案
 ## 補足・注意事項
 * なし
 * Codex に依頼する場合は、機能差分として `src/**` または `tests/**` の変更が必要な前提で記載する
+* `.github/workflows/**`、`infra/**`、`deploy/**`、`Dockerfile`、`docker-compose.yml`、DB schema、release automation を変更する場合は、作業内容に `Allowed restricted paths` と理由を明記する

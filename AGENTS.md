@@ -39,7 +39,7 @@ Before making any changes, Codex must read the following files:
 
 ## Allowed Changes
 
-Codex may only modify the following paths unless explicitly allowed in the issue:
+Codex may modify the following baseline paths for ordinary implementation issues:
 
 * src/commands/**
 * src/services/**
@@ -54,57 +54,79 @@ Codex may only modify the following paths unless explicitly allowed in the issue
 * Cargo.lock
 
 <!--
-Issue に明示されていない限り、上記以外のパスは変更してはいけない。
+通常の実装 Issue では上記を基本の変更可能範囲とする。
 -->
+
+Paths outside this list may be changed when the issue explicitly authorizes them in a section such as
+`Allowed restricted paths`, `Scope Override`, or `Files or directories allowed to change`.
+
+In non-interactive GitHub Actions runs, explicit authorization in the issue body is the human approval source. Codex
+should not stop to ask for separate approval when the issue clearly authorizes the restricted path.
 
 For implementation requests, Codex should prefer changing behavior in `src/**` and validating it in `tests/**`.
 
 Prompt/config/docs-only changes are not considered a complete implementation unless the issue explicitly asks for
 documentation or Codex configuration updates.
 
-If a requested feature or bug fix cannot be completed without touching files outside the allowed paths, Codex must stop
-and explain the blocked path instead of finishing with only `.codex` or documentation changes.
+If a requested feature or bug fix cannot be completed without touching a restricted path that the issue did not
+authorize, Codex must stop and explain the blocked path instead of finishing with only `.codex` or documentation changes.
 
 ---
 
-## Forbidden Changes
+## Absolute Forbidden Changes
 
 Codex must never modify:
 
-* .github/workflows/**
-* infra/**
-* deploy/**
 * secrets/**
 * .env
 * .env.*
-* Dockerfile
-* docker-compose.yml
-* release scripts
-* production configs
+* files containing real tokens, passwords, private keys, credentials, or production secret values
+* generated private backups, game saves, player data, or logs containing private data
 
-Any attempt to modify forbidden files must fail immediately.
+Codex must never commit secret values, print secret values into logs, or add generated private runtime data to the
+repository.
 
 <!--
-上記ファイルやディレクトリは変更禁止。
-変更しようとした場合は即座に停止すること。
+秘密情報や個人データは絶対にコミットしない。
 -->
 
 ---
 
-## Human Approval Required
+## Restricted Changes Requiring Explicit Issue Authorization
 
-The following changes always require explicit human approval:
+The following changes require explicit authorization in the issue body:
 
 * GitHub Actions workflow changes
 * Deployment changes
 * Infrastructure changes
 * Database schema changes
-* Secret-related files
+* Secret-management configuration changes
 * Release automation changes
+* Terraform or other infrastructure-as-code changes
+* Dockerfile or docker-compose.yml changes
+* production configuration template changes
+
+Examples of acceptable authorization sections:
+
+```md
+## Allowed restricted paths
+
+- .github/workflows/**
+- infra/**
+- deploy/**
+- Dockerfile
+- docker-compose.yml
+
+Reason:
+- This issue is specifically about CI, deployment, or infrastructure.
+```
+
+If a restricted change is clearly authorized by the issue, Codex may implement it and explain the reason in the Draft PR.
+If the issue does not authorize the required restricted path, Codex must stop and report the missing authorization.
 
 <!--
-以下は必ず人間の承認が必要。
-自動で進めてはいけない。
+非対話の GitHub Actions では Issue 本文の明示を承認として扱う。
+許可がない restricted path は変更しない。
 -->
 
 Cargo.toml / Cargo.lock changes, including adding dependencies, are allowed when they are necessary to complete the
@@ -319,11 +341,11 @@ Codex should stop work if:
 
 * The workflow time budget is close to expiring and no coherent implementation can be completed
 * The scope becomes unclear
-* Human approval is required
-* The required implementation would touch forbidden paths that the issue did not explicitly approve
+* The required implementation would touch restricted paths that the issue did not explicitly authorize
+* The required implementation would touch absolute forbidden files or secret values
 
 <!--
-時間切れが近い場合、不明確な要件、人間承認が必要な場合、または未承認の禁止パス変更が必要な場合は停止する。
+時間切れが近い場合、不明確な要件、未承認の restricted path 変更、または絶対禁止対象の変更が必要な場合は停止する。
 差分量だけを理由に停止しない。
 -->
 
@@ -335,7 +357,7 @@ Codex should:
 
 1. Read the issue carefully
 2. Read all required AI documentation
-3. Limit work to allowed paths
+3. Limit work to baseline paths and issue-authorized restricted paths
 4. Reuse existing patterns
 5. Make the smallest possible change
 6. Run required checks

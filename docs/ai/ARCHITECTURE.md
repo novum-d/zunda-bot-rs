@@ -5,11 +5,12 @@
 This document explains the repository structure, ownership boundaries, and where new code should be placed.
 
 Codex should use this file to avoid unnecessary refactors, large-scale changes, or introducing new directories without
-approval.
+explicit issue authorization.
 
 <!--
 このファイルはリポジトリ構成と責務を説明する。
 Codex は不要なリファクタ、大規模変更、新規ディレクトリ追加を避けること。
+Issue で明示されている場合は、その許可範囲に従う。
 -->
 
 ---
@@ -28,6 +29,7 @@ Codex は不要なリファクタ、大規模変更、新規ディレクトリ�
 │   └── main.rs       # Application entry point
 ├── tests/            # Automated tests
 ├── docs/             # Documentation
+├── infra/            # Infrastructure assets when explicitly authorized by an issue
 ├── .github/          # GitHub configuration
 └── README.md
 ```
@@ -210,23 +212,23 @@ Examples:
 
 ---
 
-## Forbidden Architectural Changes
+## Restricted Architectural Changes
 
-Codex must not:
+Codex must not make the following changes unless the issue explicitly authorizes them:
 
 * Introduce new top-level directories
 * Split the project into multiple crates
-* Introduce a database without approval
-* Introduce Docker without approval
-* Introduce background workers without approval
+* Introduce a database
+* Introduce Docker
+* Introduce background workers
 * Rewrite core application flow
 * Rename many files at once
 * Move large amounts of code between directories
 * Add new infrastructure or deployment logic
 
 <!--
-大規模構成変更は禁止。
-crate 分割、DB 導入、Docker 導入、デプロイ自動化は承認必須。
+大規模構成変更は Issue の明示許可がある場合のみ行う。
+crate 分割、DB 導入、Docker 導入、デプロイ自動化は Issue 本文で許可範囲を明記する。
 -->
 
 ---
@@ -280,7 +282,7 @@ All PRs should:
 * Include changed files
 * Include test results
 * Stay under 300 lines when the issue scope reasonably allows it
-* Stay within the allowed paths
+* Stay within baseline paths and issue-authorized restricted paths
 * Avoid touching unrelated code
 
 <!--
@@ -295,9 +297,9 @@ Issue 番号、変更内容、テスト結果を含める。
 
 Codex must immediately stop if:
 
-* A forbidden path would be modified
+* An absolute forbidden path or secret value would be modified
+* A restricted path would be modified without explicit issue authorization
 * The issue scope becomes unclear
-* Human approval is required
 
 Codex should treat these as review guidance targets, not hard stop conditions:
 

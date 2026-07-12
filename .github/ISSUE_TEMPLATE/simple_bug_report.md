@@ -32,3 +32,4 @@ labels: バグ
 ## 補足・注意事項
 * なし
 * Codex に依頼する場合は、再現防止のため `src/**` または `tests/**` に関連差分が入る前提で記載する
+* `.github/workflows/**`、`infra/**`、`deploy/**`、`Dockerfile`、`docker-compose.yml`、DB schema、release automation を変更する場合は、作業内容に `Allowed restricted paths` と理由を明記する

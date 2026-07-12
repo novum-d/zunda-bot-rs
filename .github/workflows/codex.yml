@@ -100,12 +100,15 @@ jobs:
           Rules:
           - Follow AGENTS.md
           - If the issue explicitly allows scope overrides, follow the issue scope
+          - Treat explicit issue sections such as "Allowed restricted paths", "Scope Override", or "Files or directories allowed to change" as human authorization for those paths
           - If the issue explicitly defines a broad implementation, do not stop solely because the work is large
-          - Do not touch workflows, deploy, infra, or secrets unless the issue explicitly allows it
+          - Restricted paths such as workflows, deploy, infra, Dockerfile, docker-compose.yml, database schema, release automation, and infrastructure-as-code may be changed only when the issue explicitly authorizes them
+          - Never commit secrets, .env files, real tokens, passwords, private keys, generated private backups, game saves, player data, or private logs
           - Write PR title and body in Japanese
           - Run cargo fmt --check, cargo clippy --all-targets --all-features -- -D warnings, cargo test when possible
           - If fmt, clippy, or test fails, record the failure and continue
-          - Stop if approval is required
+          - Do not stop for separate approval in this non-interactive workflow when the issue already grants the required authorization
+          - Stop if a required restricted path is not authorized by the issue
           - Keep changes focused on the issue only
           EOF
           } > .codex/prompt.md
@@ -123,14 +126,27 @@ jobs:
         run: git checkout -- .codex/prompt.md
 
       - name: Verify repository changes
+        id: verify_changes
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_KIND: ${{ steps.issue_type.outputs.kind }}
         run: |
           changed_files=$(git diff --name-only -- . ':(exclude).codex')
           if [ -z "$changed_files" ]; then
+            if [ "$ISSUE_KIND" = "later" ] \
+              || printf '%s\n' "$ISSUE_BODY" | grep -qiE '^[[:space:]]*-[[:space:]]*\[[xX]\][[:space:]]*(Investigation|Planning|Docs only|No repository changes required)[[:space:]]*$' \
+              || printf '%s\n' "$ISSUE_BODY" | grep -qiE '^##[[:space:]]*(Investigation|Planning)[[:space:]]*$'; then
+              echo "::notice::Codex did not create repository changes for a non-implementation issue. Skipping PR creation."
+              echo "has_changes=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             echo "::error::Codex did not create repository changes. Check the Run Codex log for blockers, scope-limit decisions, or approval requests."
             exit 1
           fi
+          echo "has_changes=true" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust components
+        if: steps.verify_changes.outputs.has_changes == 'true'
         continue-on-error: true
         run: |
           rustup component add rustfmt
@@ -138,21 +154,25 @@ jobs:
 
       - name: Format check
         id: fmt
+        if: steps.verify_changes.outputs.has_changes == 'true'
         continue-on-error: true
         run: cargo fmt --check
 
       - name: Clippy
         id: clippy
+        if: steps.verify_changes.outputs.has_changes == 'true'
         continue-on-error: true
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Test
         id: test
+        if: steps.verify_changes.outputs.has_changes == 'true'
         continue-on-error: true
         run: cargo test
 
       - name: Build Pull Request metadata
         id: pr_metadata
+        if: steps.verify_changes.outputs.has_changes == 'true'
         env:
           ISSUE_TITLE: ${{ github.event.issue.title }}
         run: |
@@ -173,6 +193,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Create Pull Request
+        if: steps.verify_changes.outputs.has_changes == 'true'
         uses: peter-evans/create-pull-request@v8.1.1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}

@@ -36,9 +36,9 @@ explained in the PR. Broad dependency upgrades should be avoided.
 
 ## Database Policy
 
-Current persistence is file-based.
+Current persistence is file-based by default.
 
-Do not introduce a new database without approval.
+Do not introduce a new database unless the issue explicitly authorizes the schema and persistence change.
 
 Do not introduce:
 
@@ -48,20 +48,20 @@ Do not introduce:
 * SQLite
 * External managed databases
 
-unless explicitly approved.
+unless explicitly authorized by the issue.
 
 <!--
 現在はファイルベース管理を前提とする。
-勝手に DB を導入しない。
+Issue で明示されている場合のみ DB を導入する。
 -->
 
 ---
 
 ## Deployment Policy
 
-Deployment is handled manually.
+Deployment is handled manually by default.
 
-Do not add deployment automation without approval.
+Do not add deployment automation unless the issue explicitly authorizes it.
 
 Do not introduce:
 
@@ -71,11 +71,11 @@ Do not introduce:
 * Terraform
 * Infrastructure-as-code tools
 
-unless explicitly approved.
+unless explicitly authorized by the issue.
 
 <!--
 デプロイは手動前提。
-勝手に deploy workflow や IaC を追加しない。
+Issue で明示されている場合のみ deploy workflow や IaC を追加する。
 -->
 
 ---
@@ -90,11 +90,11 @@ Do not add:
 * docker-compose.yml
 * Container build workflows
 
-unless explicitly approved.
+unless explicitly authorized by the issue.
 
 <!--
-Docker は現時点では不要。
-勝手に Docker 化しない。
+Docker はデフォルトでは不要。
+Issue で明示されている場合のみ Docker 関連差分を追加する。
 -->
 
 ---
@@ -116,7 +116,7 @@ Do not add:
 * Complex release pipelines
 * Automatic deployment
 
-unless explicitly approved.
+unless explicitly authorized by the issue.
 
 <!--
 CI は最小限に保つ。
@@ -214,5 +214,6 @@ Avoid:
 For implementation issues, a PR should normally include behavior changes in repository code, not only prompt,
 configuration, or documentation edits.
 
-If Codex is blocked by repository policy from touching the required code path, it should stop and report that policy
-conflict clearly.
+If Codex is blocked because the issue does not authorize a required restricted path, it should stop and report that
+missing authorization clearly. If the issue explicitly authorizes the restricted path, Codex may proceed while keeping
+the change focused on that issue.

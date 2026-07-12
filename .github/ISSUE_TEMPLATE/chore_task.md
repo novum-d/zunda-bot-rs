@@ -16,3 +16,4 @@ title: '[🏗️ 雑用] <タイトル>'
 ## 補足・注意事項
 * なし
 * Codex に依頼する場合でも、このテンプレートでは docs やリポジトリ設定のみの変更で完了してよい
+* `.github/workflows/**`、`infra/**`、`deploy/**`、`Dockerfile`、`docker-compose.yml`、DB schema、release automation を変更する場合は、作業内容に `Allowed restricted paths` と理由を明記する

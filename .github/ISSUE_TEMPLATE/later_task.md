@@ -25,3 +25,4 @@ labels: 対応保留（後で実装）
 ## 補足・注意事項
 * なし
 * このテンプレートは記録用途を想定する。実装を依頼する場合は、実装系テンプレートへ切り替えるか `src/**` 変更が必要なことを明記する
+* `.github/workflows/**`、`infra/**`、`deploy/**`、`Dockerfile`、`docker-compose.yml`、DB schema、release automation を変更する場合は、作業内容に `Allowed restricted paths` と理由を明記する

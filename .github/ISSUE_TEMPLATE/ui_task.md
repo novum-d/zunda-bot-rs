@@ -21,3 +21,4 @@ title: '[🎨 UI実装] <タイトル>'
 ## 補足・注意事項
 * なし
 * Codex に依頼する場合は、UI に対応するコードやテストの差分が入る前提で記載する
+* `.github/workflows/**`、`infra/**`、`deploy/**`、`Dockerfile`、`docker-compose.yml`、DB schema、release automation を変更する場合は、作業内容に `Allowed restricted paths` と理由を明記する
