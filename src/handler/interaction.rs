@@ -116,18 +116,20 @@ async fn handle_birth_reset_interaction(
         return Ok(true);
     }
 
+    component
+        .create_response(&data.discord_http, CreateInteractionResponse::Acknowledge)
+        .await?;
+
     data.birth_reset_usecase
         .reset_member_birth(guild_id, member_id)
         .await?;
 
     component
-        .create_response(
+        .edit_response(
             &data.discord_http,
-            CreateInteractionResponse::UpdateMessage(
-                CreateInteractionResponseMessage::new()
-                    .content("誕生日の通知登録を解除したのだ。")
-                    .components(Vec::new()),
-            ),
+            EditInteractionResponse::new()
+                .content("誕生日の通知登録を解除したのだ。")
+                .components(Vec::new()),
         )
         .await?;
     Ok(true)

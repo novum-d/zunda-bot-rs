@@ -8,7 +8,7 @@ use crate::usecase::birth_signup_usecase::BirthSignupResult;
 use anyhow::Context as _;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use serenity::all::{GuildId, Interaction};
+use serenity::all::{ApplicationId, GuildId, Interaction};
 
 const INTERACTION_TYPE_PING: u8 = 1;
 const INTERACTION_TYPE_APPLICATION_COMMAND: u8 = 2;
@@ -16,6 +16,7 @@ const INTERACTION_TYPE_COMPONENT: u8 = 3;
 const INTERACTION_TYPE_MODAL_SUBMIT: u8 = 5;
 const RESPONSE_TYPE_PONG: u8 = 1;
 const RESPONSE_TYPE_CHANNEL_MESSAGE: u8 = 4;
+const RESPONSE_TYPE_DEFERRED_CHANNEL_MESSAGE: u8 = 5;
 const RESPONSE_TYPE_MODAL: u8 = 9;
 const EPHEMERAL_FLAG: u64 = 64;
 const BIRTH_SIGNUP_MODAL_ID: &str = "birth_signup";
@@ -55,15 +56,21 @@ pub async fn handle_interaction_body(
             json!({ "type": RESPONSE_TYPE_PONG }),
         )),
         INTERACTION_TYPE_APPLICATION_COMMAND => {
-            let data = data.context("interaction handler is disabled")?;
+            let Some(data) = data else {
+                return Ok(discord_response(starting_message()));
+            };
             handle_application_command(data, interaction).await
         }
         INTERACTION_TYPE_COMPONENT => {
-            let data = data.context("interaction handler is disabled")?;
+            let Some(data) = data else {
+                return Ok(discord_response(starting_message()));
+            };
             handle_component(data, body).await
         }
         INTERACTION_TYPE_MODAL_SUBMIT => {
-            let data = data.context("interaction handler is disabled")?;
+            let Some(data) = data else {
+                return Ok(discord_response(starting_message()));
+            };
             handle_modal_submit(data, interaction).await
         }
         _ => Ok(WebhookHttpResponse::json(
@@ -77,13 +84,78 @@ async fn handle_application_command(
     data: &Data,
     interaction: DiscordInteraction,
 ) -> anyhow::Result<WebhookHttpResponse> {
+    let command_data = interaction
+        .data
+        .as_ref()
+        .context("application command data missing")?;
+    let route = ApplicationCommandRoute::from_command_data(command_data)
+        .context("unsupported application command")?;
+
+    match route {
+        ApplicationCommandRoute::Hello => Ok(discord_response(message("こんにちは、なのだ!"))),
+        ApplicationCommandRoute::BirthSignup => Ok(discord_response(signup_modal())),
+        route => {
+            let data = data.clone();
+            tokio::spawn(async move {
+                send_deferred_application_command_followup(data, interaction, route).await;
+            });
+            Ok(discord_response(deferred_message()))
+        }
+    }
+}
+
+async fn send_deferred_application_command_followup(
+    data: Data,
+    interaction: DiscordInteraction,
+    route: ApplicationCommandRoute,
+) {
+    let Some(token) = interaction.token.clone() else {
+        tracing::warn!("Discord interaction token missing for deferred followup");
+        return;
+    };
+    let Some(application_id) = interaction
+        .application_id
+        .and_then(|application_id| u64::try_from(application_id).ok())
+    else {
+        tracing::warn!("Discord application id missing for deferred followup");
+        return;
+    };
+    data.discord_http
+        .set_application_id(ApplicationId::new(application_id));
+
+    let followup = match handle_deferred_application_command(&data, interaction, route).await {
+        Ok(response) => match followup_data_from_response(response) {
+            Ok(followup) => followup,
+            Err(e) => {
+                tracing::warn!("Deferred interaction response conversion failed: {}", e);
+                failed_followup_data()
+            }
+        },
+        Err(e) => {
+            tracing::warn!("Deferred interaction handling failed: {}", e);
+            failed_followup_data()
+        }
+    };
+
+    if let Err(e) = data
+        .discord_http
+        .create_followup_message(&token, &followup, Vec::new())
+        .await
+    {
+        tracing::warn!("Discord deferred followup failed: {}", e);
+    }
+}
+
+async fn handle_deferred_application_command(
+    data: &Data,
+    interaction: DiscordInteraction,
+    route: ApplicationCommandRoute,
+) -> anyhow::Result<WebhookHttpResponse> {
     let guild_id = interaction.guild_id;
     let member_id = interaction.user_id();
     let command_data = interaction
         .data
         .context("application command data missing")?;
-    let route = ApplicationCommandRoute::from_command_data(&command_data)
-        .context("unsupported application command")?;
 
     match route {
         ApplicationCommandRoute::Hello => Ok(discord_response(message("こんにちは、なのだ!"))),
@@ -255,6 +327,42 @@ fn message(content: &str) -> Value {
     })
 }
 
+fn starting_message() -> Value {
+    message("起動処理中なのだ。数秒後にもう一度試してほしいのだ。")
+}
+
+fn deferred_message() -> Value {
+    json!({
+        "type": RESPONSE_TYPE_DEFERRED_CHANNEL_MESSAGE,
+        "data": {
+            "flags": EPHEMERAL_FLAG
+        }
+    })
+}
+
+fn failed_followup_data() -> Value {
+    json!({
+        "content": "処理に失敗したのだ。時間をおいて再試行してほしいのだ。",
+        "flags": EPHEMERAL_FLAG
+    })
+}
+
+fn followup_data_from_response(response: WebhookHttpResponse) -> anyhow::Result<Value> {
+    if response.status != 200 {
+        anyhow::bail!("deferred response status was {}", response.status);
+    }
+
+    let body = serde_json::from_str::<Value>(&response.body)
+        .context("deferred response body JSON parse failed")?;
+    if body.get("type").and_then(Value::as_u64) != Some(u64::from(RESPONSE_TYPE_CHANNEL_MESSAGE)) {
+        anyhow::bail!("deferred response was not a channel message");
+    }
+
+    body.get("data")
+        .cloned()
+        .context("deferred response data missing")
+}
+
 fn embed_message(title: &str, color: u32) -> Value {
     json!({
         "type": RESPONSE_TYPE_CHANNEL_MESSAGE,
@@ -411,6 +519,9 @@ struct DiscordInteraction {
     #[serde(rename = "type")]
     interaction_type: u8,
     #[serde(default, deserialize_with = "deserialize_optional_i64")]
+    application_id: Option<i64>,
+    token: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_i64")]
     guild_id: Option<i64>,
     member: Option<InteractionMember>,
     user: Option<InteractionUser>,
@@ -440,6 +551,7 @@ struct InteractionUser {
 
 #[derive(Debug, Deserialize)]
 struct ApplicationCommandData {
+    #[serde(default)]
     name: String,
     #[serde(default)]
     custom_id: Option<String>,
@@ -566,6 +678,48 @@ mod tests {
         assert_eq!(
             data.modal_text_value(BIRTH_SIGNUP_INPUT_ID),
             Some("02/01".to_string())
+        );
+    }
+
+    #[test]
+    fn parses_component_payload_without_command_name() {
+        let interaction = serde_json::from_str::<DiscordInteraction>(
+            r#"{"type":3,"data":{"custom_id":"birth_reset_confirm:1:2","component_type":2},"member":{"user":{"id":"2"}}}"#,
+        )
+        .expect("component interaction should parse without data.name");
+
+        assert_eq!(interaction.interaction_type, INTERACTION_TYPE_COMPONENT);
+        assert_eq!(
+            interaction.data.and_then(|data| data.custom_id),
+            Some("birth_reset_confirm:1:2".to_string())
+        );
+    }
+
+    #[test]
+    fn deferred_message_is_ephemeral() {
+        assert_eq!(
+            deferred_message(),
+            json!({
+                "type": 5,
+                "data": {
+                    "flags": 64
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn extracts_followup_data_from_channel_message_response() {
+        let response = discord_response(message("done"));
+
+        let followup = followup_data_from_response(response).expect("followup data should extract");
+
+        assert_eq!(
+            followup,
+            json!({
+                "content": "done",
+                "flags": 64
+            })
         );
     }
 }

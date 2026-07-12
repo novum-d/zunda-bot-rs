@@ -2,6 +2,8 @@
 title 誕生日プッシュ通知の処理フロー
 start
 
+:Cloud SchedulerからPOST /internal/birthday/notifyを受信;
+
 :すべてのメンバー情報を含むリストをguild_memberテーブルから取得;
 
 :リストからメンバー情報を一つずつ取り出し、通知処理を実行;
