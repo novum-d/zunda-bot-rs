@@ -14,7 +14,6 @@ use crate::usecase::birth_notify_usecase::BirthNotifyUsecase;
 use crate::usecase::birth_reset_usecase::BirthResetUsecase;
 use crate::usecase::birth_signup_usecase::BirthSignupUsecase;
 use crate::usecase::guild_update_usecase::GuildUpdateUsecase;
-use crate::usecase::seven_days_usecase::SevenDaysUsecase;
 use anyhow::Context as _;
 use dotenvy::dotenv;
 use serenity::all::{ChannelType, Command, CommandOptionType, CreateCommand, CreateCommandOption};
@@ -96,7 +95,6 @@ async fn initialize_data() -> anyhow::Result<Data> {
         guild_update_usecase,
         reminder_service,
         discord_http: http,
-        seven_days_usecase: SevenDaysUsecase::from_env()?,
     })
 }
 
@@ -129,36 +127,11 @@ async fn ensure_application_id(http: &Http) -> anyhow::Result<()> {
 }
 
 async fn register_global_commands(http: &Http) -> anyhow::Result<()> {
-    let commands = vec![
-        hello_command(),
-        birth_command(),
-        setup_command(),
-        seven_days_command(),
-    ];
+    let commands = vec![hello_command(), birth_command(), setup_command()];
     Command::set_global_commands(http, commands)
         .await
         .context("Failed to register global slash commands")?;
     Ok(())
-}
-
-fn seven_days_command() -> CreateCommand {
-    CreateCommand::new("7dtd")
-        .description("7 Days to Die 専用サーバーを操作するのだ")
-        .add_option(CreateCommandOption::new(
-            CommandOptionType::SubCommand,
-            "start",
-            "サーバーを起動するのだ",
-        ))
-        .add_option(CreateCommandOption::new(
-            CommandOptionType::SubCommand,
-            "status",
-            "サーバーの状態を確認するのだ",
-        ))
-        .add_option(CreateCommandOption::new(
-            CommandOptionType::SubCommand,
-            "stop",
-            "サーバーを安全に停止するのだ",
-        ))
 }
 
 fn hello_command() -> CreateCommand {
