@@ -5,6 +5,7 @@ use crate::res::colors::EMBED_COLOR_WARNING;
 use crate::usecase::birth_list_usecase::BirthListView;
 use crate::usecase::birth_reset_usecase::webhook_reset_button_custom_id;
 use crate::usecase::birth_signup_usecase::BirthSignupResult;
+use crate::usecase::seven_days_usecase::Caller;
 use anyhow::Context as _;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -152,7 +153,13 @@ async fn handle_deferred_application_command(
     route: ApplicationCommandRoute,
 ) -> anyhow::Result<WebhookHttpResponse> {
     let guild_id = interaction.guild_id;
+    let channel_id = interaction.channel_id;
     let member_id = interaction.user_id();
+    let role_ids = interaction
+        .member
+        .as_ref()
+        .map(|member| member.roles.clone())
+        .unwrap_or_default();
     let command_data = interaction
         .data
         .context("application command data missing")?;
@@ -225,6 +232,47 @@ async fn handle_deferred_application_command(
         }
         ApplicationCommandRoute::SetupRemoveNotificationChannel => {
             manage_notification_channel(data, guild_id, member_id, &command_data, false).await
+        }
+        ApplicationCommandRoute::SevenDaysStart
+        | ApplicationCommandRoute::SevenDaysStatus
+        | ApplicationCommandRoute::SevenDaysStop => {
+            let Some(usecase) = &data.seven_days_usecase else {
+                return Ok(discord_response(message(
+                    "7DTD サーバーは設定されていないのだ。",
+                )));
+            };
+            let caller = Caller {
+                guild_id,
+                channel_id,
+                user_id: member_id,
+                role_ids: &role_ids,
+            };
+            let admin = route == ApplicationCommandRoute::SevenDaysStop;
+            if !usecase.authorize(&caller, admin) {
+                tracing::warn!(?guild_id, ?channel_id, user_id = ?member_id, command = ?route, "unauthorized 7DTD command");
+                return Ok(discord_response(message(
+                    "このコマンドを実行する権限がないのだ。",
+                )));
+            }
+            tracing::info!(?guild_id, ?channel_id, user_id = ?member_id, command = ?route, "starting 7DTD command");
+            let result = match route {
+                ApplicationCommandRoute::SevenDaysStart => usecase.start().await,
+                ApplicationCommandRoute::SevenDaysStatus => usecase.status().await,
+                ApplicationCommandRoute::SevenDaysStop => usecase.stop().await,
+                _ => unreachable!(),
+            };
+            match result {
+                Ok(content) => {
+                    tracing::info!(command = ?route, "7DTD command completed");
+                    Ok(discord_response(message(&content)))
+                }
+                Err(error) => {
+                    tracing::error!(command = ?route, error = %error, "7DTD command failed");
+                    Ok(discord_response(message(
+                        "7DTD サーバーの操作に失敗したのだ。管理者にログ確認を依頼してほしいのだ。",
+                    )))
+                }
+            }
         }
     }
 }
@@ -477,7 +525,7 @@ fn value_as_i64(value: &Value) -> Option<i64> {
         .or_else(|| value.as_str()?.parse::<i64>().ok())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApplicationCommandRoute {
     Hello,
     BirthList,
@@ -487,6 +535,9 @@ pub enum ApplicationCommandRoute {
     SetupReminderChannel,
     SetupAddNotificationChannel,
     SetupRemoveNotificationChannel,
+    SevenDaysStart,
+    SevenDaysStatus,
+    SevenDaysStop,
 }
 
 impl ApplicationCommandRoute {
@@ -509,6 +560,12 @@ impl ApplicationCommandRoute {
                 "remove-notification-channel" => Some(Self::SetupRemoveNotificationChannel),
                 _ => None,
             },
+            "7dtd" => match data.options.first()?.name.as_str() {
+                "start" => Some(Self::SevenDaysStart),
+                "status" => Some(Self::SevenDaysStatus),
+                "stop" => Some(Self::SevenDaysStop),
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -523,6 +580,8 @@ struct DiscordInteraction {
     token: Option<String>,
     #[serde(default, deserialize_with = "deserialize_optional_i64")]
     guild_id: Option<i64>,
+    #[serde(default, deserialize_with = "deserialize_optional_i64")]
+    channel_id: Option<i64>,
     member: Option<InteractionMember>,
     user: Option<InteractionUser>,
     data: Option<ApplicationCommandData>,
@@ -541,6 +600,8 @@ impl DiscordInteraction {
 #[derive(Debug, Deserialize)]
 struct InteractionMember {
     user: Option<InteractionUser>,
+    #[serde(default, deserialize_with = "deserialize_i64_vec")]
+    roles: Vec<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -623,6 +684,18 @@ where
     value_as_i64(&value).ok_or_else(|| serde::de::Error::custom("invalid integer value"))
 }
 
+fn deserialize_i64_vec<'de, D>(deserializer: D) -> Result<Vec<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Vec::<Value>::deserialize(deserializer)?
+        .iter()
+        .map(|value| {
+            value_as_i64(value).ok_or_else(|| serde::de::Error::custom("invalid integer value"))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -653,6 +726,15 @@ mod tests {
         assert_eq!(
             ApplicationCommandRoute::from_command_data(&data),
             Some(ApplicationCommandRoute::BirthRemindResume)
+        );
+    }
+
+    #[test]
+    fn routes_seven_days_stop_command() {
+        let data = command_data(r#"{"type":2,"data":{"name":"7dtd","options":[{"name":"stop"}]}}"#);
+        assert_eq!(
+            ApplicationCommandRoute::from_command_data(&data),
+            Some(ApplicationCommandRoute::SevenDaysStop)
         );
     }
 
