@@ -40,6 +40,15 @@ ID のリストはカンマ区切り。一般 ID は start/status、管理 ID �
 
 ## Backup と復元確認
 
-`/usr/local/sbin/seven-days-backup` は data disk 内の `backups/<UTC時刻>` に手動コピーを作る。実行前にゲーム内保存する。日次 snapshot は 14 日保持する。
+### バックアップ要件
+
+- ゲームサーバーが稼働していない状態で、自動バックアップを実行しない。
+- ゲーム終了時は、ゲーム内保存と正常停止が完了した後にだけスナップショットを作成する。
+- 定期実行の snapshot policy は使用せず、`/7dtd stop` の停止フローから明示的にスナップショットを作成する。
+- 強制停止やクラッシュ時のバックアップは保証しない。必要な場合は、別途手動で復旧手順を実行する。
+
+上記は運用要件であり、現時点の Terraform にある日次 snapshot policy は未対応である。
+
+`/usr/local/sbin/seven-days-backup` は data disk 内の `backups/<UTC時刻>` に手動コピーを作る。実行前にゲーム内保存する。
 
 復元は新しい disk を snapshot から作り、検証用 VM に read/write attach して Saves/GeneratedWorlds と起動を確認する。確認後に本番 VM を停止し、Terraform の disk 参照を復元 disk に計画的に切り替える。元 disk は検証完了まで削除しない。少なくとも初回構築後に一度この復元テストを行い、snapshot 名と結果を運用記録へ残す。
