@@ -2,7 +2,7 @@
 
 ## 構成と初期構築
 
-`infra/terraform/seven-days-server` を apply すると、東京リージョンの `e2-standard-4` VM、80 GB の分離 Persistent Disk、ゲーム用 firewall、日次 snapshot policy、Cloud Run 用最小権限 custom role、DuckDNS Secret の IAM、Budget Alert を作成する。外部 IPv4 は一時アドレスであり、停止中も Persistent Disk、snapshot 等の料金は発生する。
+`infra/terraform/seven-days-server` を apply すると、東京リージョンの `e2-standard-4` VM、80 GB の分離 Persistent Disk、ゲーム用 firewall、日次 snapshot policy、Cloud Run 用 custom role、DuckDNS Secret の IAM、Budget Alert を作成する。外部 IPv4 は一時アドレスであり、停止中も Persistent Disk、snapshot 等の料金は発生する。日次 snapshot policy は現行 Terraform の実装であり、計画ではゲーム正常停止後の明示的なスナップショットへ置き換える。
 
 1. Secret Manager に `SEVEN_DAYS_DUCKDNS_TOKEN` とサーバーパスワードを登録する。値を tfvars や state に入れない。
 2. Terraform README に従い versioning 有効な state bucket を bootstrap し apply する。
@@ -20,6 +20,8 @@ SEVEN_DAYS_DISCORD_ADMIN_USER_IDS, SEVEN_DAYS_DISCORD_ADMIN_ROLE_IDS
 
 ID のリストはカンマ区切り。一般 ID は start/status、管理 ID は start/status/stop を実行できる。
 
+ゲームサーバーは身内の 2〜4 人だけで利用する。`game_source_ranges` には参加者の固定 IPv4 を `/32` で指定し、ゲーム用ポートへの接続元を限定する。VPN は利用しない。自宅回線の IP が変わった場合は、Terraform の値を更新して再 apply する。SSH などの管理用ポートを全世界へ公開しない。
+
 `start` は Discord への defer 後も READY 確認を続ける。Cloud Tasks を使わない初期構成では処理中の instance 終了を避けるため、Cloud Run を `--min-instances=1 --no-cpu-throttling` に設定する。これは bot の待機費用を増やすため、将来 Cloud Tasks 化した時点で scale-to-zero に戻す。
 
 ## Windows セーブ移行
@@ -33,7 +35,7 @@ ID のリストはカンマ区切り。一般 ID は start/status、管理 ID �
 
 - `/7dtd start`: TERMINATED の場合だけ起動し、外部 IPv4 を DuckDNS に登録して TCP 26900 が開くまで待つ。
 - `/7dtd status`: VM、ポート、domain、外部 IPv4、稼働時間を表示する。
-- `/7dtd stop`: Compute Engine の通常停止を要求する。systemd `ExecStop` がゲーム内通知、`saveworld`、`shutdown`、プロセス終了確認を行う。停止完了は status で確認する。
+- `/7dtd stop`: Compute Engine の通常停止を要求する。systemd `ExecStop` がゲーム内通知、`saveworld`、`shutdown`、プロセス終了確認を行う。停止完了は status で確認する。計画では、ゲーム内保存と正常停止の完了後にスナップショットを作成する。
 - READY にならない場合は serial/startup logs、`systemctl status seven-days`、`journalctl -u seven-days`、firewall、`serverconfig.xml` を確認する。
 - DuckDNS 失敗時は Secret の version と Cloud Run service account の accessor IAM を確認する。token を URL やログに貼らない。
 - stop が完了しない場合は VM を強制停止せず journal と telnet password file を確認し、ゲーム内で保存後に再試行する。

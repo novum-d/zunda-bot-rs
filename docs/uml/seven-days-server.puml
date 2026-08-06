@@ -15,5 +15,6 @@ Bot -> DuckDNS: update temporary IPv4
 Bot -> VM: TCP 26900 readiness
 VM -> Disk: Saves / GeneratedWorlds / backups
 VM -> Disk: saveworld before shutdown
+Bot -> Compute: create snapshot after normal stop
 Bot --> Discord: ephemeral followup
 @enduml
