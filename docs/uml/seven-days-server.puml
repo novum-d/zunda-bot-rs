@@ -1,0 +1,20 @@
+@startuml
+actor User
+participant Discord
+participant "zunda-bot-rs\nCloud Run" as Bot
+participant "Compute Engine API" as Compute
+participant DuckDNS
+participant "7DTD VM\nsystemd" as VM
+database "Persistent Disk" as Disk
+User -> Discord: /7dtd start|status|stop
+Discord -> Bot: signed interaction
+Bot -> Bot: Guild/Channel/User/Role authorization
+Bot -> Compute: get/start/stop
+Compute -> VM: power lifecycle
+Bot -> DuckDNS: update temporary IPv4
+Bot -> VM: TCP 26900 readiness
+VM -> Disk: Saves / GeneratedWorlds / backups
+VM -> Disk: saveworld before shutdown
+Bot -> Compute: create snapshot after normal stop
+Bot --> Discord: ephemeral followup
+@enduml

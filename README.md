@@ -205,6 +205,12 @@ gcloud run services describe zunda-bot-rs \
 
 * [UML一覧](docs/uml/)
 * [UML整合性チェック](docs/uml/整合性チェック.md)
+* [7 Days to Die サーバー Runbook](docs/seven-days-server.md)
+
+## 7 Days to Die サーバー
+
+許可された Discord Guild／Channel／User・Role から `/7dtd start`、`/7dtd status`、管理者の `/7dtd stop` を実行できる。GCP 構築、Cloud Run 環境変数、セーブ移行、安全停止、backup／復元は Runbook を参照する。
+READY までの非同期処理を確実に完了させるため、初期構成では Runbook 記載の Cloud Run CPU 設定が必要になる。
 
 ## デバッグ
 
