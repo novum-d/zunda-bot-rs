@@ -53,8 +53,14 @@ variable "network" {
 # ゲームポートへの接続を許可する参加者の送信元 CIDR。
 # 身内向け運用では固定 IP を /32 で指定し、全世界公開を避ける。
 variable "game_source_ranges" {
-  type    = list(string)
-  default = ["0.0.0.0/0"]
+  type = list(string)
+
+  validation {
+    condition = length(var.game_source_ranges) > 0 && alltrue([
+      for cidr in var.game_source_ranges : can(cidrnetmask(cidr)) && endswith(cidr, "/32")
+    ])
+    error_message = "game_source_ranges には接続を許可するIPv4アドレスを /32 形式で1件以上指定してください。"
+  }
 }
 
 # VM の起動・停止操作と DuckDNS Secret の読み取りを行う Cloud Run のサービスアカウント。
@@ -66,7 +72,7 @@ variable "billing_account_id" { type = string }
 # 予算通知の基準となる月額金額（JPY）。通知のみで、支出は自動停止しない。
 variable "monthly_budget_jpy" {
   type    = number
-  default = 5000
+  default = 2000
 }
 
 # Cloud Run に読み取りを許可する DuckDNS token の Secret ID。
