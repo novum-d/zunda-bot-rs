@@ -52,10 +52,9 @@ grep -q "$UUID" /etc/fstab || printf 'UUID=%s %s xfs defaults,nofail 0 2\n' "$UU
 ##    ├── Saves
 ##    ├── GeneratedWorlds
 ##    ├── Mods
-##    ├── backups
 ##    └── serverconfig.xml
 mount "$MOUNT" || mount -a
-mkdir -p "$MOUNT"/{Saves,GeneratedWorlds,Mods,backups} /opt/seven-days
+mkdir -p "$MOUNT"/{Saves,GeneratedWorlds,Mods} /opt/seven-days
 chown -R seven-days:seven-days "$MOUNT" /opt/seven-days
 
 # ゲームサーバー本体を専用ユーザー(seven-days)でインストール・検証する。
@@ -70,7 +69,9 @@ METADATA=http://metadata.google.internal/computeMetadata/v1/instance/attributes
 metadata_file() { curl -fsS -H 'Metadata-Flavor: Google' "$METADATA/$1" | base64 -d >"$2"; }
 metadata_file seven-days-safe-stop /usr/local/sbin/seven-days-safe-stop
 metadata_file seven-days-backup /usr/local/sbin/seven-days-backup
+metadata_file seven-days-backup-bucket /etc/seven-days-backup-bucket
 chmod 0755 /usr/local/sbin/seven-days-safe-stop /usr/local/sbin/seven-days-backup
+chmod 0644 /etc/seven-days-backup-bucket
 
 # 初回だけメタデータにある設定テンプレートを永続ディスクへ配置する。
 ## 運用中に変更される設定ファイルなので、初回のみ配置

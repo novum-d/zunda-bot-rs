@@ -1,7 +1,7 @@
 # リソースを作成する GCP プロジェクト ID。
 variable "project_id" { type = string }
 
-# Compute Engine リソースとスナップショットを配置するリージョン。
+# Compute Engine リソースと GCS バックアップを配置するリージョン。
 variable "region" {
   type    = string
   default = "asia-northeast1"
@@ -23,6 +23,25 @@ variable "instance_name" {
 variable "machine_type" {
   type    = string
   default = "e2-standard-4"
+}
+
+# セーブデータ、ワールド、Mod を置くデータディスクの容量（GiB）。
+# テスト用の初期値は 10 GiB とする。継続運用では 20 GiB 以上を推奨する。
+variable "data_disk_size_gb" {
+  type    = number
+  default = 10
+}
+
+# バックアップ用 GCS バケット名。空の場合はプロジェクト ID から生成する。
+variable "backup_bucket_name" {
+  type    = string
+  default = ""
+}
+
+# GCS バックアップの保持日数。期限を過ぎたオブジェクトは自動削除される。
+variable "backup_retention_days" {
+  type    = number
+  default = 30
 }
 
 # VM とファイアウォールを配置する VPC ネットワーク。
