@@ -2,12 +2,13 @@
 
 ## 構成と初期構築
 
-`infra/terraform/seven-days-server` を apply すると、東京リージョンの `e2-standard-4` VM、80 GB の分離 Persistent Disk、ゲーム用 firewall、日次 snapshot policy、Cloud Run 用 custom role、DuckDNS Secret の IAM、Budget Alert を作成する。外部 IPv4 は一時アドレスであり、停止中も Persistent Disk、snapshot 等の料金は発生する。日次 snapshot policy は現行 Terraform の実装であり、計画ではゲーム正常停止後の明示的なスナップショットへ置き換える。
+`infra/terraform/seven-days-server` を apply すると、東京リージョンの `e2-standard-4` VM、テスト用 10 GiB の分離 Persistent Disk、東京リージョンの GCS バックアップバケット、ゲーム用 firewall、Cloud Run 用 custom role、DuckDNS Secret の IAM、Budget Alert を作成する。外部 IPv4 は一時アドレスであり、停止中も Persistent Disk と GCS の保存料金は発生する。GCS バケットは既定で 30 日を過ぎたバックアップを自動削除する。継続運用では `data_disk_size_gb=20` 以上を推奨する。
 
-1. Secret Manager に `SEVEN_DAYS_DUCKDNS_TOKEN` とサーバーパスワードを登録する。値を tfvars や state に入れない。
-2. Terraform README に従い versioning 有効な state bucket を bootstrap し apply する。
-3. 初回 SSH で `/srv/seven-days-data/serverconfig.xml` の `CHANGE_BEFORE_START` を Secret Manager から安全に取得した値へ置換する。Telnet password と同じ値を root のみ読める `/srv/seven-days-data/telnet-password` に保存する（`ExecStop=+` の停止処理だけが読む）。値を shell history やログへ出さない。
-4. `systemctl start seven-days` を実行し、`systemctl status seven-days` と `journalctl -u seven-days` で確認する。以後は VM 起動時に自動起動する。
+1. Secret Manager に `SEVEN_DAYS_DUCKDNS_TOKEN` を登録する。ゲームサーバーと Telnet のパスワードは初回起動時に VM 内で生成するため、tfvars や state には入れない。
+2. Terraform README に従い versioning 有効な state bucket を bootstrap し、必要なら `backup_bucket_name` を指定して apply する。バックアップ用バケットは Terraform が作成する。
+   既存の 80 GiB データディスクは縮小できないため、既存環境では移行完了まで `data_disk_size_gb=80` を明示する。新しい 10 GiB ディスクへのコピーと短時間の起動確認を終えてから、ディスク参照を切り替える。継続運用へ移る場合は20GiB以上へ拡張する。
+3. 初回起動時に startup script が `/srv/seven-days-data/serverconfig.xml` の `CHANGE_BEFORE_START` をランダム値へ置換する。ゲーム用と Telnet 用の値は、それぞれ root のみ読める `/srv/seven-days-data/server-password` と `/srv/seven-days-data/telnet-password` にも保存する。値を shell history やログへ出さない。
+4. startup script がゲームサーバーを起動し、TCP 26900 の待受を確認してからプロビジョニング完了とする。`serverconfig.xml` にプレースホルダーが残る場合は systemd の起動条件でも拒否する。起動後に service の状態と journal を確認し、以後は VM 起動時に自動起動する。
 5. Cloud Run に下記環境変数を設定し、DuckDNS token だけを Secret Manager から注入する。
 
 ```text
@@ -35,7 +36,7 @@ ID のリストはカンマ区切り。一般 ID は start/status、管理 ID �
 
 - `/7dtd start`: TERMINATED の場合だけ起動し、外部 IPv4 を DuckDNS に登録して TCP 26900 が開くまで待つ。
 - `/7dtd status`: VM、ポート、domain、外部 IPv4、稼働時間を表示する。
-- `/7dtd stop`: Compute Engine の通常停止を要求する。systemd `ExecStop` がゲーム内通知、`saveworld`、`shutdown`、プロセス終了確認を行う。停止完了は status で確認する。計画では、ゲーム内保存と正常停止の完了後にスナップショットを作成する。
+- `/7dtd stop`: Compute Engine の通常停止を要求する。systemd `ExecStop` がゲーム内通知、`saveworld`、`shutdown`、プロセス終了確認を行う。停止完了は status で確認する。
 - READY にならない場合は serial/startup logs、`systemctl status seven-days`、`journalctl -u seven-days`、firewall、`serverconfig.xml` を確認する。
 - DuckDNS 失敗時は Secret の version と Cloud Run service account の accessor IAM を確認する。token を URL やログに貼らない。
 - stop が完了しない場合は VM を強制停止せず journal と telnet password file を確認し、ゲーム内で保存後に再試行する。
@@ -44,13 +45,10 @@ ID のリストはカンマ区切り。一般 ID は start/status、管理 ID �
 
 ### バックアップ要件
 
-- ゲームサーバーが稼働していない状態で、自動バックアップを実行しない。
-- ゲーム終了時は、ゲーム内保存と正常停止が完了した後にだけスナップショットを作成する。
-- 定期実行の snapshot policy は使用せず、`/7dtd stop` の停止フローから明示的にスナップショットを作成する。
+- ゲームサーバーが稼働していない状態で、ゲーム内保存後に `/usr/local/sbin/seven-days-backup` を手動実行する。
+- `/usr/local/sbin/seven-days-backup` は Saves、GeneratedWorlds、serverconfig.xml、存在する場合は Mods を gzip 圧縮し、Terraform が作成した GCS バケットの `backups/` へアップロードする。
+- アップロード中だけデータディスク上に一時アーカイブを作成し、成功・失敗を問わず終了時に削除する。
+- GCS バケットのライフサイクルにより、既定では 30 日を過ぎたバックアップを削除する。長期保管が必要な場合は `backup_retention_days` を変更する。
 - 強制停止やクラッシュ時のバックアップは保証しない。必要な場合は、別途手動で復旧手順を実行する。
 
-上記は運用要件であり、現時点の Terraform にある日次 snapshot policy は未対応である。
-
-`/usr/local/sbin/seven-days-backup` は data disk 内の `backups/<UTC時刻>` に手動コピーを作る。実行前にゲーム内保存する。
-
-復元は新しい disk を snapshot から作り、検証用 VM に read/write attach して Saves/GeneratedWorlds と起動を確認する。確認後に本番 VM を停止し、Terraform の disk 参照を復元 disk に計画的に切り替える。元 disk は検証完了まで削除しない。少なくとも初回構築後に一度この復元テストを行い、snapshot 名と結果を運用記録へ残す。
+復元は GCS の対象オブジェクトを検証用 VM へダウンロードして展開し、Saves/GeneratedWorlds と起動を確認する。確認後に本番 VM を停止し、必要なデータだけを本番ディスクへ戻す。少なくとも初回構築後に一度この復元テストを行い、GCS オブジェクト名と結果を運用記録へ残す。

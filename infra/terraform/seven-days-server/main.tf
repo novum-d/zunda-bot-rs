@@ -3,41 +3,39 @@
 resource "google_compute_disk" "data" {
   name = "${var.instance_name}-data"
   type = "pd-balanced"
-  size = 80
+  size = var.data_disk_size_gb
   zone = var.zone
   lifecycle {
     prevent_destroy = true
   }
 }
 
-# 現在は毎日自動でスナップショットを取得し、14 日間保持する。
-# 要件では、ゲームの正常停止と保存完了後にだけ取得する方式へ変更する。
-# 定期実行の snapshot policy を廃止する際は、このリソースと下記 attachment を見直す。
-resource "google_compute_resource_policy" "snapshots" {
-  name   = "${var.instance_name}-daily-snapshots"
-  region = var.region
-  snapshot_schedule_policy {
-    schedule {
-      daily_schedule {
-        days_in_cycle = 1
-        start_time    = "19:00"
-      }
+# ゲームのバックアップは VM のディスクとは別の GCS バケットへ保存する。
+# ライフサイクルで古いバックアップを削除し、データディスクの容量増加を防ぐ。
+resource "google_storage_bucket" "backup" {
+  name                        = var.backup_bucket_name != "" ? var.backup_bucket_name : "${var.project_id}-${var.instance_name}-backups"
+  location                    = var.region
+  storage_class               = "STANDARD"
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+  force_destroy               = false
+
+  lifecycle_rule {
+    action {
+      type = "Delete"
     }
-    retention_policy {
-      max_retention_days    = 14
-      on_source_disk_delete = "KEEP_AUTO_SNAPSHOTS"
-    }
-    snapshot_properties {
-      storage_locations = [var.region]
+    condition {
+      age = var.backup_retention_days
     }
   }
 }
 
-# 上記のスナップショットポリシーをデータディスクへ適用する。
-resource "google_compute_disk_resource_policy_attachment" "snapshots" {
-  name = google_compute_resource_policy.snapshots.name
-  disk = google_compute_disk.data.name
-  zone = var.zone
+# VM は Compute Engine のデフォルトサービスアカウントでバックアップをアップロードする。
+# バケット単位の権限に限定し、プロジェクト全体の Storage 権限は付与しない。
+resource "google_storage_bucket_iam_member" "backup_writer" {
+  bucket = google_storage_bucket.backup.name
+  role   = "roles/storage.objectCreator"
+  member = "serviceAccount:${data.google_project.current.number}-compute@developer.gserviceaccount.com"
 }
 
 # 7DTD のゲーム通信だけを許可するファイアウォール。
@@ -92,10 +90,11 @@ resource "google_compute_instance" "server" {
   # Base64 は暗号化ではないため、秘密情報はここへ入れない。
   # install.sh 側で各値を Base64 デコードして利用する。
   metadata = {
-    enable-osconfig      = "TRUE"
-    seven-days-safe-stop = base64encode(file("${path.module}/../../seven-days/safe-stop.sh"))
-    seven-days-backup    = base64encode(file("${path.module}/../../seven-days/backup.sh"))
-    seven-days-config    = base64encode(file("${path.module}/../../seven-days/serverconfig.template.xml"))
+    enable-osconfig          = "TRUE"
+    seven-days-safe-stop     = base64encode(file("${path.module}/../../seven-days/safe-stop.sh"))
+    seven-days-backup        = base64encode(file("${path.module}/../../seven-days/backup.sh"))
+    seven-days-backup-bucket = base64encode(google_storage_bucket.backup.name)
+    seven-days-config        = base64encode(file("${path.module}/../../seven-days/serverconfig.template.xml"))
   }
   # VM 初回起動時に SteamCMD、7DTD、systemd などをセットアップする。
   metadata_startup_script = file("${path.module}/../../seven-days/install.sh")
@@ -105,9 +104,6 @@ resource "google_compute_instance" "server" {
   service_account {
     scopes = ["cloud-platform"]
   }
-  # 現在の構成では snapshot policy の attachment 完了後に VM を作成する。
-  # 停止後の明示的なスナップショット方式へ移行する際は削除対象。
-  depends_on = [google_compute_disk_resource_policy_attachment.snapshots]
 }
 
 # Cloud Run から VM の状態確認・起動・停止だけを行うためのカスタムロール。
