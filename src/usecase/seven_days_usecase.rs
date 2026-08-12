@@ -1,9 +1,12 @@
 use crate::services::seven_days_gcp::{
     ComputeClient, DuckDnsClient, GuestRuntimeState, InstanceStatus,
 };
+use crate::services::seven_days_operation_lock::SevenDaysOperationLock;
 use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
-use std::{collections::HashSet, env, time::Duration};
+use sqlx::PgPool;
+use std::{collections::HashSet, env, sync::Arc, time::Duration};
+use tokio::net::TcpStream;
 use tokio::time::Instant;
 
 const START_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -17,6 +20,7 @@ pub struct SevenDaysUsecase {
     domain: String,
     port: u16,
     auth: Authorization,
+    operation_pool: Arc<PgPool>,
 }
 
 #[derive(Clone)]
@@ -56,7 +60,7 @@ pub struct Caller<'a> {
 }
 
 impl SevenDaysUsecase {
-    pub fn from_env() -> Result<Option<Self>> {
+    pub fn from_env(operation_pool: Arc<PgPool>) -> Result<Option<Self>> {
         let Some(project) = optional_env("SEVEN_DAYS_GCP_PROJECT") else {
             return Ok(None);
         };
@@ -84,7 +88,12 @@ impl SevenDaysUsecase {
                 admin_users: id_set("SEVEN_DAYS_DISCORD_ADMIN_USER_IDS")?,
                 admin_roles: id_set("SEVEN_DAYS_DISCORD_ADMIN_ROLE_IDS")?,
             },
+            operation_pool,
         }))
+    }
+
+    pub async fn try_operation_lock(&self) -> Result<Option<SevenDaysOperationLock>> {
+        SevenDaysOperationLock::try_acquire(&self.operation_pool).await
     }
 
     pub fn authorize(&self, caller: &Caller<'_>, admin: bool) -> bool {

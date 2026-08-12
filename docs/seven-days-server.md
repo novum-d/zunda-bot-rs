@@ -34,9 +34,10 @@ ID のリストはカンマ区切り。一般 ID は status、管理 ID は star
 
 ## 通常運用と障害対応
 
-- `/7dtd start`: 管理者限定。TERMINATED の場合だけ起動し、外部 IPv4 を DuckDNS に登録して、VM 内で TCP 26900 を確認した現在の起動の READY 通知を待つ。
-- `/7dtd status`: VM、Guest Attributes上のゲーム状態、ポート、domain、外部 IPv4、稼働時間を表示する。
-- `/7dtd stop`: 管理者限定。Compute Engine の通常停止を要求する。systemd `ExecStop` がゲーム内通知、`saveworld`、`shutdown`、プロセス終了確認を通常停止猶予内に行い、Botは最大2分停止完了を待つ。
+- `/7dtd start`: 管理者限定。TERMINATED の場合だけ起動し、外部 IPv4 を DuckDNS に登録して TCP 26900 が開くまで待つ。
+- `/7dtd status`: VM、ポート、domain、外部 IPv4、稼働時間を表示する。
+- `/7dtd stop`: 管理者限定。Compute Engine の通常停止を要求する。systemd `ExecStop` がゲーム内通知、`saveworld`、`shutdown`、プロセス終了確認を行う。停止完了は status で確認する。
+- `/7dtd start` と `/7dtd stop` はPostgreSQLのトランザクションロックを取得してからVM操作を行う。別の開始・停止処理が実行中ならVM APIを呼ばず使用中メッセージを返す。Cloud Runが複数インスタンスでも同じDBロックを共有する。
 - READY にならない場合は serial/startup logs、`systemctl status seven-days`、`journalctl -u seven-days`、firewall、`serverconfig.xml` を確認する。
 - DuckDNS 失敗時は Secret の version と Cloud Run service account の accessor IAM を確認する。token を URL やログに貼らない。
 - stop が完了しない場合は VM を強制停止せず journal と telnet password file を確認し、ゲーム内で保存後に再試行する。
