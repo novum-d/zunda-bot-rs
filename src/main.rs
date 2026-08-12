@@ -96,7 +96,7 @@ async fn initialize_data() -> anyhow::Result<Data> {
         guild_update_usecase,
         reminder_service,
         discord_http: http,
-        seven_days_usecase: SevenDaysUsecase::from_env()?,
+        seven_days_usecase: SevenDaysUsecase::from_env(pool)?,
     })
 }
 
