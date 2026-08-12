@@ -250,13 +250,7 @@ async fn handle_deferred_application_command(
                 user_id: member_id,
                 role_ids: &role_ids,
             };
-            let admin = matches!(
-                route,
-                ApplicationCommandRoute::SevenDaysStop
-                    | ApplicationCommandRoute::SevenDaysIpList
-                    | ApplicationCommandRoute::SevenDaysIpAdd
-                    | ApplicationCommandRoute::SevenDaysIpRemove
-            );
+            let admin = route.requires_seven_days_admin();
             if !usecase.authorize(&caller, admin) {
                 tracing::warn!(?guild_id, ?channel_id, user_id = ?member_id, command = ?route, "unauthorized 7DTD command");
                 return Ok(discord_response(message(
@@ -568,6 +562,17 @@ pub enum ApplicationCommandRoute {
 }
 
 impl ApplicationCommandRoute {
+    fn requires_seven_days_admin(self) -> bool {
+        matches!(
+            self,
+            Self::SevenDaysStart
+                | Self::SevenDaysStop
+                | Self::SevenDaysIpList
+                | Self::SevenDaysIpAdd
+                | Self::SevenDaysIpRemove
+        )
+    }
+
     fn from_command_data(data: &ApplicationCommandData) -> Option<Self> {
         match data.name.as_str() {
             "hello" => Some(Self::Hello),
@@ -805,6 +810,16 @@ mod tests {
                 .and_then(Value::as_str),
             Some("8.8.8.8")
         );
+    }
+
+    #[test]
+    fn starting_and_stopping_seven_days_require_admin() {
+        assert!(ApplicationCommandRoute::SevenDaysStart.requires_seven_days_admin());
+        assert!(ApplicationCommandRoute::SevenDaysStop.requires_seven_days_admin());
+        assert!(!ApplicationCommandRoute::SevenDaysStatus.requires_seven_days_admin());
+        assert!(ApplicationCommandRoute::SevenDaysIpList.requires_seven_days_admin());
+        assert!(ApplicationCommandRoute::SevenDaysIpAdd.requires_seven_days_admin());
+        assert!(ApplicationCommandRoute::SevenDaysIpRemove.requires_seven_days_admin());
     }
 
     #[test]
