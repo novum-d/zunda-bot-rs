@@ -4,8 +4,98 @@ set -euo pipefail
 # apt の対話プロンプトを無効化し、起動時に自動実行できるようにする。
 export DEBIAN_FRONTEND=noninteractive
 
+MOUNT=/srv/seven-days-data
+METADATA_ROOT=http://metadata.google.internal/computeMetadata/v1
+
+# ゲームサーバーパスワードを専用Secretへ同期する。値は引数・標準出力・Guest Attributesへ出さない。
+sync_server_password_secret() {
+  local secret_file="$MOUNT/server-password"
+  local hash_file="$MOUNT/server-password-secret.sha256"
+  local secret_id
+  [ -s "$secret_file" ] || return 0
+  if ! secret_id=$(curl -fsS -H 'Metadata-Flavor: Google' \
+    "$METADATA_ROOT/instance/attributes/seven-days-server-password-secret"); then
+    return 1
+  fi
+  [ -n "$secret_id" ] || return 1
+  python3 - "$secret_file" "$hash_file" "$secret_id" <<'PY'
+import base64
+import hashlib
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+password_path, hash_path, secret_id = sys.argv[1:]
+with open(password_path, "rb") as password_file:
+    password = password_file.read().strip()
+if not password:
+    raise RuntimeError("ゲームサーバーパスワードが空です")
+
+digest = hashlib.sha256(password).hexdigest()
+try:
+    with open(hash_path, encoding="ascii") as hash_file:
+        if hash_file.read().strip() == digest:
+            raise SystemExit(0)
+except FileNotFoundError:
+    pass
+
+metadata_root = "http://metadata.google.internal/computeMetadata/v1"
+
+
+def metadata(path: str) -> bytes:
+    request = urllib.request.Request(
+        f"{metadata_root}/{path}", headers={"Metadata-Flavor": "Google"}
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        return response.read()
+
+
+project_id = metadata("project/project-id").decode("ascii")
+token = json.loads(metadata("instance/service-accounts/default/token"))["access_token"]
+url = (
+    "https://secretmanager.googleapis.com/v1/projects/"
+    f"{urllib.parse.quote(project_id, safe='')}/secrets/"
+    f"{urllib.parse.quote(secret_id.strip(), safe='')}:addVersion"
+)
+body = json.dumps(
+    {"payload": {"data": base64.b64encode(password).decode("ascii")}}
+).encode("utf-8")
+request = urllib.request.Request(
+    url,
+    data=body,
+    method="POST",
+    headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+)
+for attempt in range(6):
+    try:
+        with urllib.request.urlopen(request, timeout=20):
+            break
+    except urllib.error.HTTPError as error:
+        if error.code not in {403, 429, 500, 502, 503, 504} or attempt == 5:
+            raise
+        time.sleep(5)
+
+temporary_path = f"{hash_path}.tmp"
+descriptor = os.open(temporary_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(descriptor, "w", encoding="ascii") as hash_file:
+    hash_file.write(digest)
+    hash_file.write("\n")
+os.chmod(temporary_path, 0o600)
+os.replace(temporary_path, hash_path)
+PY
+}
+
 # 完了マーカーがある場合は再実行せず、既存環境を変更しない。
-if [ -f /var/lib/seven-days-provisioned ]; then exit 0; fi
+if [ -f /var/lib/seven-days-provisioned ]; then
+  if ! sync_server_password_secret; then
+    printf 'ゲームサーバーパスワードのSecret同期に失敗しました。次回起動時に再試行します\n' >&2
+  fi
+  exit 0
+fi
 
 # SteamCMD と、データディスクを扱うためのツールをインストールする。
 apt-get update
@@ -27,7 +117,6 @@ id seven-days >/dev/null 2>&1 || useradd --system --create-home --shell /usr/sbi
 ## デバイス(ディスク操作用 - ゲームデータを書き込むと、XFSの構造を壊したり、データを上書きする危険があるので直接触らない)
 DEVICE=/dev/disk/by-id/google-seven-days-data
 ## マウントポイント(ファイル操作用)
-MOUNT=/srv/seven-days-data
 mkdir -p "$MOUNT"
 ## XFSとしてフォーマットし、ディスク内部にUUIDを保存
 if ! blkid "$DEVICE" >/dev/null 2>&1; then mkfs.xfs "$DEVICE"; fi
@@ -148,6 +237,9 @@ if changed:
     os.chmod(temporary_path, stat.S_IMODE(config_stat.st_mode))
     os.replace(temporary_path, config_path)
 PY
+
+# Secret同期に失敗した場合はFirewall追加前に検知できるよう、初期構築を完了扱いにしない。
+sync_server_password_secret
 
 # ゲームサーバーの状態を Compute Engine Guest Attributes へ通知する。
 # 起動時刻を含め、Bot が前回起動時の READY を誤認しないようにする。

@@ -80,3 +80,9 @@ variable "duckdns_secret_id" {
   type    = string
   default = "SEVEN_DAYS_DUCKDNS_TOKEN"
 }
+
+# VMがゲームサーバーパスワードを同期し、Cloud RunがIP追加時に読む専用Secret ID。
+variable "server_password_secret_id" {
+  type    = string
+  default = "SEVEN_DAYS_SERVER_PASSWORD"
+}

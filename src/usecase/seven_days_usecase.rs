@@ -1,6 +1,7 @@
 use crate::services::seven_days_gcp::{
     ComputeClient, DuckDnsClient, GuestRuntimeState, InstanceStatus,
 };
+use crate::services::seven_days_secret::SecretManagerClient;
 use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use std::{collections::HashSet, env, net::Ipv4Addr, time::Duration};
@@ -18,6 +19,7 @@ pub struct SevenDaysUsecase {
     port: u16,
     network: String,
     max_allowed_ips: usize,
+    server_password: SecretManagerClient,
     auth: Authorization,
 }
 
@@ -67,6 +69,11 @@ impl SevenDaysUsecase {
         };
         let parse = |name: &str| -> Result<i64> { Ok(required(name)?.parse()?) };
         let (duckdns_subdomain, domain) = duckdns_names(&required("SEVEN_DAYS_DUCKDNS_DOMAIN")?)?;
+        let server_password = SecretManagerClient::new(
+            project.clone(),
+            optional_env("SEVEN_DAYS_SERVER_PASSWORD_SECRET_ID")
+                .unwrap_or_else(|| "SEVEN_DAYS_SERVER_PASSWORD".into()),
+        )?;
         Ok(Some(Self {
             compute: ComputeClient::new(
                 project,
@@ -82,6 +89,7 @@ impl SevenDaysUsecase {
             max_allowed_ips: optional_env("SEVEN_DAYS_MAX_ALLOWED_IPS")
                 .unwrap_or_else(|| "16".into())
                 .parse()?,
+            server_password,
             auth: Authorization {
                 guild_id: parse("SEVEN_DAYS_DISCORD_GUILD_ID")?,
                 channel_id: parse("SEVEN_DAYS_DISCORD_CHANNEL_ID")?,
@@ -188,19 +196,28 @@ impl SevenDaysUsecase {
     pub async fn add_allowed_ip(&self, value: &str) -> Result<String> {
         let ip = allowed_ipv4(value)?;
         let current = self.compute.allowed_ips().await?;
-        if current.contains(&ip) {
-            return Ok("そのIPはすでに許可されているのだ。".into());
+        let already_allowed = current.contains(&ip);
+        if !already_allowed {
+            anyhow::ensure!(
+                current.len() < self.max_allowed_ips,
+                "allowed IP limit ({}) was reached",
+                self.max_allowed_ips
+            );
         }
-        anyhow::ensure!(
-            current.len() < self.max_allowed_ips,
-            "allowed IP limit ({}) was reached",
-            self.max_allowed_ips
-        );
-        if self.compute.add_allowed_ip(ip, &self.network).await? {
-            Ok(format!("`{ip}` を接続許可IPへ追加したのだ。"))
+        // Firewallを変更する前に取得し、パスワードを表示できない中途半端な成功を避ける。
+        let password = self.server_password.latest().await?;
+        let added = if already_allowed {
+            false
         } else {
-            Ok("そのIPはすでに許可されているのだ。".into())
-        }
+            self.compute.add_allowed_ip(ip, &self.network).await?
+        };
+        Ok(format_allowed_ip_add(
+            ip,
+            &self.domain,
+            self.port,
+            &password,
+            added,
+        ))
     }
 
     pub async fn remove_allowed_ip(&self, value: &str) -> Result<String> {
@@ -290,6 +307,23 @@ fn allowed_ipv4(value: &str) -> Result<Ipv4Addr> {
         .context("address must be an IPv4 address")?;
     anyhow::ensure!(is_global_ipv4(ip), "address must be a global IPv4 address");
     Ok(ip)
+}
+
+fn format_allowed_ip_add(
+    ip: Ipv4Addr,
+    domain: &str,
+    port: u16,
+    password: &str,
+    added: bool,
+) -> String {
+    let result = if added {
+        format!("`{ip}` を接続許可IPへ追加したのだ。")
+    } else {
+        "そのIPはすでに許可されているのだ。".into()
+    };
+    format!(
+        "{result}\n接続先: `{domain}:{port}`\nサーバーパスワード: `{password}`\n※管理者だけが受け取るエフェメラル応答なのだ。"
+    )
 }
 
 fn is_global_ipv4(ip: Ipv4Addr) -> bool {
@@ -420,5 +454,19 @@ mod tests {
         ] {
             assert!(allowed_ipv4(address).is_err(), "{address} must be rejected");
         }
+    }
+
+    #[test]
+    fn formats_password_after_allowed_ip_add() {
+        assert_eq!(
+            format_allowed_ip_add(
+                Ipv4Addr::new(8, 8, 8, 8),
+                "zunda-7dtd.duckdns.org",
+                26900,
+                "0123456789abcdef",
+                true,
+            ),
+            "`8.8.8.8` を接続許可IPへ追加したのだ。\n接続先: `zunda-7dtd.duckdns.org:26900`\nサーバーパスワード: `0123456789abcdef`\n※管理者だけが受け取るエフェメラル応答なのだ。"
+        );
     }
 }
