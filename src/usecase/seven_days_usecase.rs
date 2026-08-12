@@ -3,6 +3,10 @@ use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use std::{collections::HashSet, env, time::Duration};
 use tokio::net::TcpStream;
+use tokio::time::Instant;
+
+const START_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Clone)]
 pub struct SevenDaysUsecase {
@@ -58,14 +62,14 @@ impl SevenDaysUsecase {
             env::var(name).with_context(|| format!("'{name}' is required when 7DTD is enabled"))
         };
         let parse = |name: &str| -> Result<i64> { Ok(required(name)?.parse()?) };
-        let domain = required("SEVEN_DAYS_DUCKDNS_DOMAIN")?;
+        let (duckdns_subdomain, domain) = duckdns_names(&required("SEVEN_DAYS_DUCKDNS_DOMAIN")?)?;
         Ok(Some(Self {
             compute: ComputeClient::new(
                 project,
                 required("SEVEN_DAYS_GCP_ZONE")?,
                 required("SEVEN_DAYS_GCP_INSTANCE")?,
             )?,
-            duckdns: DuckDnsClient::new(domain.clone(), required("SEVEN_DAYS_DUCKDNS_TOKEN")?),
+            duckdns: DuckDnsClient::new(duckdns_subdomain, required("SEVEN_DAYS_DUCKDNS_TOKEN")?),
             domain,
             port: optional_env("SEVEN_DAYS_PORT")
                 .unwrap_or_else(|| "26900".into())
@@ -86,6 +90,7 @@ impl SevenDaysUsecase {
     }
 
     pub async fn start(&self) -> Result<String> {
+        let deadline = Instant::now() + START_TIMEOUT;
         let mut status = self.compute.status().await?;
         if status.state == "TERMINATED" {
             self.compute.start().await?;
@@ -95,41 +100,38 @@ impl SevenDaysUsecase {
                 status.state
             ));
         }
-        for _ in 0..30 {
+        while Instant::now() < deadline {
             status = self.compute.status().await?;
             if status.state == "RUNNING" && status.external_ip.is_some() {
                 break;
             }
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            tokio::time::sleep(POLL_INTERVAL).await;
         }
         let ip = status
             .external_ip
             .context("VM started but external IPv4 was unavailable")?;
         self.duckdns.update(&ip).await?;
-        for _ in 0..30 {
+        while Instant::now() < deadline {
             if tcp_ready(&ip, self.port).await {
                 return Ok(format!(
                     "READY なのだ！ `{}` / `{}:{}`",
                     self.domain, ip, self.port
                 ));
             }
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            tokio::time::sleep(POLL_INTERVAL).await;
         }
         anyhow::bail!("VM and DuckDNS are ready, but the game port did not become reachable")
     }
 
     pub async fn status(&self) -> Result<String> {
         let status = self.compute.status().await?;
+        let uptime = uptime_minutes(&status, Utc::now())
+            .map(|minutes| format!("{minutes}分"))
+            .unwrap_or_else(|| "なし".into());
         let ip = status.external_ip.unwrap_or_else(|| "なし".into());
         let ready = status.state == "RUNNING" && tcp_ready(&ip, self.port).await;
-        let uptime = status
-            .last_start
-            .as_deref()
-            .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
-            .map(|started| (Utc::now() - started.with_timezone(&Utc)).num_minutes())
-            .unwrap_or(0);
         Ok(format!(
-            "VM: {}\nゲーム: {}\n接続先: `{}:{}`\n外部 IPv4: `{}`\n稼働時間: {}分",
+            "VM: {}\nゲーム: {}\n接続先: `{}:{}`\n外部 IPv4: `{}`\n稼働時間: {}",
             status.state,
             if ready { "READY" } else { "NOT READY" },
             self.domain,
@@ -171,6 +173,35 @@ fn id_set(name: &str) -> Result<HashSet<i64>> {
         .collect()
 }
 
+fn duckdns_names(value: &str) -> Result<(String, String)> {
+    let value = value.trim().trim_end_matches('.').to_ascii_lowercase();
+    let subdomain = value.strip_suffix(".duckdns.org").unwrap_or(&value);
+    anyhow::ensure!(
+        !subdomain.is_empty() && !subdomain.contains('.'),
+        "SEVEN_DAYS_DUCKDNS_DOMAIN must be a DuckDNS subdomain or FQDN"
+    );
+    anyhow::ensure!(
+        subdomain
+            .chars()
+            .all(|character| character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || character == '-'),
+        "SEVEN_DAYS_DUCKDNS_DOMAIN contains invalid characters"
+    );
+    Ok((subdomain.into(), format!("{subdomain}.duckdns.org")))
+}
+
+fn uptime_minutes(status: &InstanceStatus, now: DateTime<Utc>) -> Option<i64> {
+    if status.state != "RUNNING" {
+        return None;
+    }
+    status
+        .last_start
+        .as_deref()
+        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+        .map(|started| (now - started.with_timezone(&Utc)).num_minutes().max(0))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,5 +238,37 @@ mod tests {
         };
         assert!(auth().allowed(&admin, true));
         assert!(auth().allowed(&admin, false));
+    }
+
+    #[test]
+    fn normalizes_duckdns_subdomain_and_fqdn() {
+        assert_eq!(
+            duckdns_names("Zunda-7DTD.duckdns.org.").expect("domain should be valid"),
+            ("zunda-7dtd".into(), "zunda-7dtd.duckdns.org".into())
+        );
+        assert_eq!(
+            duckdns_names("zunda-7dtd").expect("subdomain should be valid"),
+            ("zunda-7dtd".into(), "zunda-7dtd.duckdns.org".into())
+        );
+        assert!(duckdns_names("example.com").is_err());
+    }
+
+    #[test]
+    fn uptime_is_only_reported_for_running_instance() {
+        let now = DateTime::parse_from_rfc3339("2026-08-12T03:00:00Z")
+            .expect("timestamp should parse")
+            .with_timezone(&Utc);
+        let running = InstanceStatus {
+            state: "RUNNING".into(),
+            external_ip: None,
+            last_start: Some("2026-08-12T01:30:00Z".into()),
+        };
+        assert_eq!(uptime_minutes(&running, now), Some(90));
+
+        let stopped = InstanceStatus {
+            state: "TERMINATED".into(),
+            ..running
+        };
+        assert_eq!(uptime_minutes(&stopped, now), None);
     }
 }

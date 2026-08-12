@@ -730,12 +730,20 @@ mod tests {
     }
 
     #[test]
-    fn routes_seven_days_stop_command() {
-        let data = command_data(r#"{"type":2,"data":{"name":"7dtd","options":[{"name":"stop"}]}}"#);
-        assert_eq!(
-            ApplicationCommandRoute::from_command_data(&data),
-            Some(ApplicationCommandRoute::SevenDaysStop)
-        );
+    fn routes_seven_days_commands() {
+        for (subcommand, expected) in [
+            ("start", ApplicationCommandRoute::SevenDaysStart),
+            ("status", ApplicationCommandRoute::SevenDaysStatus),
+            ("stop", ApplicationCommandRoute::SevenDaysStop),
+        ] {
+            let data = command_data(&format!(
+                r#"{{"type":2,"data":{{"name":"7dtd","options":[{{"name":"{subcommand}"}}]}}}}"#
+            ));
+            assert_eq!(
+                ApplicationCommandRoute::from_command_data(&data),
+                Some(expected)
+            );
+        }
     }
 
     #[test]

@@ -147,13 +147,20 @@ impl DuckDnsClient {
                 ("ip", ip),
             ])
             .send()
-            .await?
-            .error_for_status()?
+            .await
+            .map_err(redact_request_url)?
+            .error_for_status()
+            .map_err(redact_request_url)?
             .text()
-            .await?;
+            .await
+            .map_err(redact_request_url)?;
         anyhow::ensure!(response.trim() == "OK", "DuckDNS update was rejected");
         Ok(())
     }
+}
+
+fn redact_request_url(error: reqwest::Error) -> anyhow::Error {
+    anyhow::Error::new(error.without_url())
 }
 
 #[cfg(test)]
