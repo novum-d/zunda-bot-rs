@@ -13,7 +13,9 @@ Bot -> Bot: Guild/Channel/User/Role authorization
 Bot -> Compute: get/start/stop
 Compute -> VM: power lifecycle
 Bot -> DuckDNS: update temporary IPv4
-Bot -> VM: TCP 26900 readiness
+VM -> VM: TCP 26900 readiness
+VM -> Compute: Guest Attributes READY
+Bot -> Compute: current boot READY lookup
 VM -> Disk: Saves / GeneratedWorlds / Mods
 VM -> Disk: saveworld before shutdown
 VM -> Storage: compressed backup upload
