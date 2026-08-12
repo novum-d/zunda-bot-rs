@@ -7,7 +7,6 @@ use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use std::{collections::HashSet, env, net::Ipv4Addr, sync::Arc, time::Duration};
-use tokio::net::TcpStream;
 use tokio::time::Instant;
 
 const START_TIMEOUT: Duration = Duration::from_secs(10 * 60);
