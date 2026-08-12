@@ -38,6 +38,40 @@ resource "google_storage_bucket_iam_member" "backup_writer" {
   member = "serviceAccount:${data.google_project.current.number}-compute@developer.gserviceaccount.com"
 }
 
+# ゲームサーバーパスワードの値はTerraformで扱わず、専用Secretの容器だけを作成する。
+resource "google_project_service" "secretmanager" {
+  project            = var.project_id
+  service            = "secretmanager.googleapis.com"
+  disable_on_destroy = false
+}
+
+resource "google_secret_manager_secret" "server_password" {
+  project   = var.project_id
+  secret_id = var.server_password_secret_id
+  replication {
+    auto {}
+  }
+  lifecycle {
+    prevent_destroy = true
+  }
+  depends_on = [google_project_service.secretmanager]
+}
+
+# VMは生成したパスワードのversion追加だけ、Cloud Runは読み取りだけを許可する。
+resource "google_secret_manager_secret_iam_member" "server_password_writer" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.server_password.secret_id
+  role      = "roles/secretmanager.secretVersionAdder"
+  member    = "serviceAccount:${data.google_project.current.number}-compute@developer.gserviceaccount.com"
+}
+
+resource "google_secret_manager_secret_iam_member" "server_password_reader" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.server_password.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${var.cloud_run_service_account_email}"
+}
+
 # 7DTD のゲーム通信だけを許可するファイアウォール。
 # source_ranges は参加者の固定 IP (/32) を指定することを想定する。
 # 0.0.0.0/0 を使う場合でも、ここで指定したゲームポート以外は公開しない。
@@ -90,12 +124,13 @@ resource "google_compute_instance" "server" {
   # Base64 は暗号化ではないため、秘密情報はここへ入れない。
   # install.sh 側で各値を Base64 デコードして利用する。
   metadata = {
-    enable-osconfig          = "TRUE"
-    enable-guest-attributes  = "TRUE"
-    seven-days-safe-stop     = base64encode(file("${path.module}/../../seven-days/safe-stop.sh"))
-    seven-days-backup        = base64encode(file("${path.module}/../../seven-days/backup.sh"))
-    seven-days-backup-bucket = base64encode(google_storage_bucket.backup.name)
-    seven-days-config        = base64encode(file("${path.module}/../../seven-days/serverconfig.template.xml"))
+    enable-osconfig                   = "TRUE"
+    enable-guest-attributes           = "TRUE"
+    seven-days-safe-stop              = base64encode(file("${path.module}/../../seven-days/safe-stop.sh"))
+    seven-days-backup                 = base64encode(file("${path.module}/../../seven-days/backup.sh"))
+    seven-days-backup-bucket          = base64encode(google_storage_bucket.backup.name)
+    seven-days-config                 = base64encode(file("${path.module}/../../seven-days/serverconfig.template.xml"))
+    seven-days-server-password-secret = google_secret_manager_secret.server_password.secret_id
   }
   # VM 初回起動時に SteamCMD、7DTD、systemd などをセットアップする。
   metadata_startup_script = file("${path.module}/../../seven-days/install.sh")
@@ -105,15 +140,27 @@ resource "google_compute_instance" "server" {
   service_account {
     scopes = ["cloud-platform"]
   }
+
+  depends_on = [google_secret_manager_secret_iam_member.server_password_writer]
 }
 
 # Cloud Run から VM の状態確認・起動・停止だけを行うためのカスタムロール。
 # プロジェクトへ付与するため、同じプロジェクト内の他 VM も対象になり得る。
 # 専用プロジェクトまたは VM 単位の IAM を検討する。
 resource "google_project_iam_custom_role" "operator" {
-  role_id     = "sevenDaysInstanceOperator"
-  title       = "7DTD instance operator"
-  permissions = ["compute.instances.get", "compute.instances.getGuestAttributes", "compute.instances.start", "compute.instances.stop", "compute.zoneOperations.get"]
+  role_id = "sevenDaysInstanceOperator"
+  title   = "7DTD instance operator"
+  permissions = [
+    "compute.firewalls.create",
+    "compute.firewalls.delete",
+    "compute.firewalls.get",
+    "compute.firewalls.list",
+    "compute.instances.get",
+    "compute.instances.getGuestAttributes",
+    "compute.instances.start",
+    "compute.instances.stop",
+    "compute.zoneOperations.get",
+  ]
 }
 
 # Cloud Run のサービスアカウントへ上記ロールを付与する。

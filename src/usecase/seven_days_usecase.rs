@@ -2,11 +2,11 @@ use crate::services::seven_days_gcp::{
     ComputeClient, DuckDnsClient, GuestRuntimeState, InstanceStatus,
 };
 use crate::services::seven_days_operation_lock::SevenDaysOperationLock;
+use crate::services::seven_days_secret::SecretManagerClient;
 use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
-use std::{collections::HashSet, env, sync::Arc, time::Duration};
-use tokio::net::TcpStream;
+use std::{collections::HashSet, env, net::Ipv4Addr, sync::Arc, time::Duration};
 use tokio::time::Instant;
 
 const START_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -19,6 +19,9 @@ pub struct SevenDaysUsecase {
     duckdns: DuckDnsClient,
     domain: String,
     port: u16,
+    network: String,
+    max_allowed_ips: usize,
+    server_password: SecretManagerClient,
     auth: Authorization,
     operation_pool: Arc<PgPool>,
 }
@@ -69,6 +72,11 @@ impl SevenDaysUsecase {
         };
         let parse = |name: &str| -> Result<i64> { Ok(required(name)?.parse()?) };
         let (duckdns_subdomain, domain) = duckdns_names(&required("SEVEN_DAYS_DUCKDNS_DOMAIN")?)?;
+        let server_password = SecretManagerClient::new(
+            project.clone(),
+            optional_env("SEVEN_DAYS_SERVER_PASSWORD_SECRET_ID")
+                .unwrap_or_else(|| "SEVEN_DAYS_SERVER_PASSWORD".into()),
+        )?;
         Ok(Some(Self {
             compute: ComputeClient::new(
                 project,
@@ -80,6 +88,11 @@ impl SevenDaysUsecase {
             port: optional_env("SEVEN_DAYS_PORT")
                 .unwrap_or_else(|| "26900".into())
                 .parse()?,
+            network: optional_env("SEVEN_DAYS_GCP_NETWORK").unwrap_or_else(|| "default".into()),
+            max_allowed_ips: optional_env("SEVEN_DAYS_MAX_ALLOWED_IPS")
+                .unwrap_or_else(|| "16".into())
+                .parse()?,
+            server_password,
             auth: Authorization {
                 guild_id: parse("SEVEN_DAYS_DISCORD_GUILD_ID")?,
                 channel_id: parse("SEVEN_DAYS_DISCORD_CHANNEL_ID")?,
@@ -173,6 +186,57 @@ impl SevenDaysUsecase {
         Ok("安全停止はまだ処理中なのだ。`/7dtd status` で停止完了を確認してほしいのだ。".into())
     }
 
+    pub async fn list_allowed_ips(&self) -> Result<String> {
+        let ips = self.compute.allowed_ips().await?;
+        if ips.is_empty() {
+            return Ok("Bot が管理する接続許可IPはないのだ。".into());
+        }
+        Ok(format!(
+            "接続許可IPなのだ（{}件）:\n{}",
+            ips.len(),
+            ips.iter()
+                .map(|ip| format!("- `{ip}`"))
+                .collect::<Vec<String>>()
+                .join("\n")
+        ))
+    }
+
+    pub async fn add_allowed_ip(&self, value: &str) -> Result<String> {
+        let ip = allowed_ipv4(value)?;
+        let current = self.compute.allowed_ips().await?;
+        let already_allowed = current.contains(&ip);
+        if !already_allowed {
+            anyhow::ensure!(
+                current.len() < self.max_allowed_ips,
+                "allowed IP limit ({}) was reached",
+                self.max_allowed_ips
+            );
+        }
+        // Firewallを変更する前に取得し、パスワードを表示できない中途半端な成功を避ける。
+        let password = self.server_password.latest().await?;
+        let added = if already_allowed {
+            false
+        } else {
+            self.compute.add_allowed_ip(ip, &self.network).await?
+        };
+        Ok(format_allowed_ip_add(
+            ip,
+            &self.domain,
+            self.port,
+            &password,
+            added,
+        ))
+    }
+
+    pub async fn remove_allowed_ip(&self, value: &str) -> Result<String> {
+        let ip = allowed_ipv4(value)?;
+        if self.compute.remove_allowed_ip(ip).await? {
+            Ok(format!("`{ip}` を接続許可IPから削除したのだ。"))
+        } else {
+            Ok("そのIPはすでに許可されていないのだ。".into())
+        }
+    }
+
     async fn runtime_ready(&self, status: &InstanceStatus) -> Result<bool> {
         let Some(runtime) = self.compute.guest_runtime_state().await? else {
             return Ok(false);
@@ -240,6 +304,55 @@ fn guest_runtime_is_current_and_ready(
         return false;
     };
     runtime_started >= instance_started
+}
+
+fn allowed_ipv4(value: &str) -> Result<Ipv4Addr> {
+    let value = value.trim();
+    let ip = value
+        .strip_suffix("/32")
+        .unwrap_or(value)
+        .parse::<Ipv4Addr>()
+        .context("address must be an IPv4 address")?;
+    anyhow::ensure!(is_global_ipv4(ip), "address must be a global IPv4 address");
+    Ok(ip)
+}
+
+fn format_allowed_ip_add(
+    ip: Ipv4Addr,
+    domain: &str,
+    port: u16,
+    password: &str,
+    added: bool,
+) -> String {
+    let result = if added {
+        format!("`{ip}` を接続許可IPへ追加したのだ。")
+    } else {
+        "そのIPはすでに許可されているのだ。".into()
+    };
+    format!(
+        "{result}\n接続先: `{domain}:{port}`\nサーバーパスワード: `{password}`\n※管理者だけが受け取るエフェメラル応答なのだ。"
+    )
+}
+
+fn is_global_ipv4(ip: Ipv4Addr) -> bool {
+    let [first, second, third, _] = ip.octets();
+    !matches!(
+        (first, second, third),
+        (0, _, _)
+            | (10, _, _)
+            | (100, 64..=127, _)
+            | (127, _, _)
+            | (169, 254, _)
+            | (172, 16..=31, _)
+            | (192, 0, 0)
+            | (192, 0, 2)
+            | (192, 88, 99)
+            | (192, 168, _)
+            | (198, 18..=19, _)
+            | (198, 51, 100)
+            | (203, 0, 113)
+            | (224..=255, _, _)
+    )
 }
 
 #[cfg(test)]
@@ -331,5 +444,37 @@ mod tests {
             ..current
         };
         assert!(!guest_runtime_is_current_and_ready(&status, &stale));
+    }
+
+    #[test]
+    fn accepts_only_global_ipv4_addresses() {
+        assert_eq!(
+            allowed_ipv4("8.8.8.8/32").expect("public IPv4 should be accepted"),
+            Ipv4Addr::new(8, 8, 8, 8)
+        );
+        for address in [
+            "10.0.0.1",
+            "127.0.0.1",
+            "169.254.1.1",
+            "192.0.2.1",
+            "224.0.0.1",
+            "255.255.255.255",
+        ] {
+            assert!(allowed_ipv4(address).is_err(), "{address} must be rejected");
+        }
+    }
+
+    #[test]
+    fn formats_password_after_allowed_ip_add() {
+        assert_eq!(
+            format_allowed_ip_add(
+                Ipv4Addr::new(8, 8, 8, 8),
+                "zunda-7dtd.duckdns.org",
+                26900,
+                "0123456789abcdef",
+                true,
+            ),
+            "`8.8.8.8` を接続許可IPへ追加したのだ。\n接続先: `zunda-7dtd.duckdns.org:26900`\nサーバーパスワード: `0123456789abcdef`\n※管理者だけが受け取るエフェメラル応答なのだ。"
+        );
     }
 }

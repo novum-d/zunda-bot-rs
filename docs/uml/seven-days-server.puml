@@ -7,8 +7,9 @@ participant DuckDNS
 participant "7DTD VM\nsystemd" as VM
 database "Persistent Disk" as Disk
 cloud "Cloud Storage\nbackup bucket" as Storage
+database "Secret Manager\nserver password" as Secret
 database "PostgreSQL\noperation lock" as OperationLock
-User -> Discord: /7dtd start|status|stop
+User -> Discord: /7dtd start|status|stop|ip
 Discord -> Bot: signed interaction
 Bot -> Bot: Guild/Channel/User/Role authorization
 Bot -> OperationLock: pg_try_advisory_xact_lock (start/stop)
@@ -24,8 +25,11 @@ Bot -> DuckDNS: update temporary IPv4
 VM -> VM: TCP 26900 readiness
 VM -> Compute: Guest Attributes READY
 Bot -> Compute: current boot READY lookup
+Bot -> Compute: managed firewall list/create/delete
+VM -> Secret: add generated password version
+Bot -> Secret: access password after admin IP add
 VM -> Disk: Saves / GeneratedWorlds / Mods
 VM -> Disk: saveworld before shutdown
 VM -> Storage: compressed backup upload
-Bot --> Discord: ephemeral followup
+Bot --> Discord: ephemeral followup / connection password
 @enduml
