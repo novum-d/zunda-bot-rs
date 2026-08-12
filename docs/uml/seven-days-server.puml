@@ -7,6 +7,7 @@ participant DuckDNS
 participant "7DTD VM\nsystemd" as VM
 database "Persistent Disk" as Disk
 cloud "Cloud Storage\nbackup bucket" as Storage
+database "BigQuery\nBilling export" as Billing
 database "PostgreSQL\noperation lock" as OperationLock
 User -> Discord: /7dtd start|status|stop
 Discord -> Bot: signed interaction
@@ -27,5 +28,6 @@ Bot -> Compute: current boot READY lookup
 VM -> Disk: Saves / GeneratedWorlds / Mods
 VM -> Disk: saveworld before shutdown
 VM -> Storage: compressed backup upload
+Bot -> Billing: monthly/yearly net cost after stop
 Bot --> Discord: ephemeral followup
 @enduml

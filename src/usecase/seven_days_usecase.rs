@@ -1,3 +1,4 @@
+use crate::services::seven_days_billing::{BillingClient, CostSummary};
 use crate::services::seven_days_gcp::{
     ComputeClient, DuckDnsClient, GuestRuntimeState, InstanceStatus,
 };
@@ -6,7 +7,6 @@ use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use std::{collections::HashSet, env, sync::Arc, time::Duration};
-use tokio::net::TcpStream;
 use tokio::time::Instant;
 
 const START_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -20,6 +20,7 @@ pub struct SevenDaysUsecase {
     domain: String,
     port: u16,
     auth: Authorization,
+    billing: Option<BillingClient>,
     operation_pool: Arc<PgPool>,
 }
 
@@ -69,6 +70,19 @@ impl SevenDaysUsecase {
         };
         let parse = |name: &str| -> Result<i64> { Ok(required(name)?.parse()?) };
         let (duckdns_subdomain, domain) = duckdns_names(&required("SEVEN_DAYS_DUCKDNS_DOMAIN")?)?;
+        let billing = optional_env("SEVEN_DAYS_BILLING_DATASET")
+            .map(|dataset| {
+                BillingClient::new(
+                    optional_env("SEVEN_DAYS_BILLING_PROJECT").unwrap_or_else(|| project.clone()),
+                    dataset,
+                    required("SEVEN_DAYS_BILLING_TABLE")?,
+                    project.clone(),
+                    optional_env("SEVEN_DAYS_BILLING_MAX_BYTES")
+                        .unwrap_or_else(|| "100000000".into())
+                        .parse()?,
+                )
+            })
+            .transpose()?;
         Ok(Some(Self {
             compute: ComputeClient::new(
                 project,
@@ -88,6 +102,7 @@ impl SevenDaysUsecase {
                 admin_users: id_set("SEVEN_DAYS_DISCORD_ADMIN_USER_IDS")?,
                 admin_roles: id_set("SEVEN_DAYS_DISCORD_ADMIN_ROLE_IDS")?,
             },
+            billing,
             operation_pool,
         }))
     }
@@ -156,7 +171,7 @@ impl SevenDaysUsecase {
     pub async fn stop(&self) -> Result<String> {
         let InstanceStatus { state, .. } = self.compute.status().await?;
         if state == "TERMINATED" {
-            return Ok("VM はすでに停止しているのだ。".into());
+            return Ok(self.with_costs("VM はすでに停止しているのだ。").await);
         }
         anyhow::ensure!(
             state == "RUNNING",
@@ -166,7 +181,9 @@ impl SevenDaysUsecase {
         let deadline = Instant::now() + STOP_TIMEOUT;
         while Instant::now() < deadline {
             if self.compute.status().await?.state == "TERMINATED" {
-                return Ok("ワールドを保存して VM を安全に停止したのだ。".into());
+                return Ok(self
+                    .with_costs("ワールドを保存して VM を安全に停止したのだ。")
+                    .await);
             }
             tokio::time::sleep(POLL_INTERVAL).await;
         }
@@ -178,6 +195,21 @@ impl SevenDaysUsecase {
             return Ok(false);
         };
         Ok(guest_runtime_is_current_and_ready(status, &runtime))
+    }
+
+    async fn with_costs(&self, message: &str) -> String {
+        let Some(billing) = &self.billing else {
+            return format!("{message}\n料金情報は設定されていないのだ。");
+        };
+        match billing.costs().await {
+            Ok(costs) => format!("{message}\n{}", format_costs(&costs)),
+            Err(error) => {
+                tracing::warn!(error = %error, "7DTD billing query failed after stop");
+                format!(
+                    "{message}\n料金情報は取得できなかったのだ。Billing export を確認してほしいのだ。"
+                )
+            }
+        }
     }
 }
 
@@ -240,6 +272,24 @@ fn guest_runtime_is_current_and_ready(
         return false;
     };
     runtime_started >= instance_started
+}
+
+fn format_costs(costs: &CostSummary) -> String {
+    let exported_at = costs
+        .exported_at
+        .as_deref()
+        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+        .map(|value| {
+            value
+                .with_timezone(&chrono_tz::Asia::Tokyo)
+                .format("%Y-%m-%d %H:%M JST")
+                .to_string()
+        })
+        .unwrap_or_else(|| "不明".into());
+    format!(
+        "料金（反映済み概算）: 今月 {} {:.0} / 今年 {} {:.0}\n集計反映時点: {}\n※直近の利用分はまだ反映されていない場合があるのだ。",
+        costs.currency, costs.monthly, costs.currency, costs.yearly, exported_at
+    )
 }
 
 #[cfg(test)]
@@ -331,5 +381,18 @@ mod tests {
             ..current
         };
         assert!(!guest_runtime_is_current_and_ready(&status, &stale));
+    }
+
+    #[test]
+    fn formats_billing_costs_with_export_time() {
+        assert_eq!(
+            format_costs(&CostSummary {
+                monthly: 1234.4,
+                yearly: 5678.6,
+                currency: "JPY".into(),
+                exported_at: Some("2026-08-12T03:00:00Z".into()),
+            }),
+            "料金（反映済み概算）: 今月 JPY 1234 / 今年 JPY 5679\n集計反映時点: 2026-08-12 12:00 JST\n※直近の利用分はまだ反映されていない場合があるのだ。"
+        );
     }
 }

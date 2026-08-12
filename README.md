@@ -209,7 +209,7 @@ gcloud run services describe zunda-bot-rs \
 
 ## 7 Days to Die サーバー
 
-許可された Discord Guild／Channel／User・Role から `/7dtd status`、管理者から `/7dtd start` と `/7dtd stop` を実行できる。開始・停止はPostgreSQLのトランザクションロックで排他し、別の処理中はVM操作を実行せず使用中メッセージを返す。GCP 構築、Cloud Run 環境変数、セーブ移行、安全停止、backup／復元は Runbook を参照する。
+許可された Discord Guild／Channel／User・Role から `/7dtd status`、管理者から `/7dtd start` と `/7dtd stop` を実行できる。VM内で確認したゲームポートのREADY状態はGuest Attributes経由でBotへ通知し、停止完了時にはCloud Billing exportに反映済みの月次・年次料金を表示する。開始・停止はPostgreSQLのトランザクションロックで排他し、別の処理中はVM操作を実行せず使用中メッセージを返す。GCP 構築、Cloud Run 環境変数、セーブ移行、安全停止、料金表示、backup／復元は Runbook を参照する。
 READY までの非同期処理を確実に完了させるため、初期構成では Runbook 記載の Cloud Run CPU 設定が必要になる。
 
 ## デバッグ
