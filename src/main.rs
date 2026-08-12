@@ -159,6 +159,48 @@ fn seven_days_command() -> CreateCommand {
             "stop",
             "サーバーを安全に停止するのだ",
         ))
+        .add_option(
+            CreateCommandOption::new(
+                CommandOptionType::SubCommandGroup,
+                "ip",
+                "ゲームへの接続許可IPを管理するのだ",
+            )
+            .add_sub_option(CreateCommandOption::new(
+                CommandOptionType::SubCommand,
+                "list",
+                "接続許可IPを一覧するのだ",
+            ))
+            .add_sub_option(
+                CreateCommandOption::new(
+                    CommandOptionType::SubCommand,
+                    "add",
+                    "接続許可IPを追加するのだ",
+                )
+                .add_sub_option(
+                    CreateCommandOption::new(
+                        CommandOptionType::String,
+                        "address",
+                        "追加するグローバルIPv4アドレス",
+                    )
+                    .required(true),
+                ),
+            )
+            .add_sub_option(
+                CreateCommandOption::new(
+                    CommandOptionType::SubCommand,
+                    "remove",
+                    "接続許可IPを削除するのだ",
+                )
+                .add_sub_option(
+                    CreateCommandOption::new(
+                        CommandOptionType::String,
+                        "address",
+                        "削除するグローバルIPv4アドレス",
+                    )
+                    .required(true),
+                ),
+            ),
+        )
 }
 
 fn hello_command() -> CreateCommand {

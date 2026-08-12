@@ -7,7 +7,7 @@ participant DuckDNS
 participant "7DTD VM\nsystemd" as VM
 database "Persistent Disk" as Disk
 cloud "Cloud Storage\nbackup bucket" as Storage
-User -> Discord: /7dtd start|status|stop
+User -> Discord: /7dtd start|status|stop|ip
 Discord -> Bot: signed interaction
 Bot -> Bot: Guild/Channel/User/Role authorization
 Bot -> Compute: get/start/stop
@@ -16,6 +16,7 @@ Bot -> DuckDNS: update temporary IPv4
 VM -> VM: TCP 26900 readiness
 VM -> Compute: Guest Attributes READY
 Bot -> Compute: current boot READY lookup
+Bot -> Compute: managed firewall list/create/delete
 VM -> Disk: Saves / GeneratedWorlds / Mods
 VM -> Disk: saveworld before shutdown
 VM -> Storage: compressed backup upload

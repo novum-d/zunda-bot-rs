@@ -111,9 +111,19 @@ resource "google_compute_instance" "server" {
 # プロジェクトへ付与するため、同じプロジェクト内の他 VM も対象になり得る。
 # 専用プロジェクトまたは VM 単位の IAM を検討する。
 resource "google_project_iam_custom_role" "operator" {
-  role_id     = "sevenDaysInstanceOperator"
-  title       = "7DTD instance operator"
-  permissions = ["compute.instances.get", "compute.instances.getGuestAttributes", "compute.instances.start", "compute.instances.stop", "compute.zoneOperations.get"]
+  role_id = "sevenDaysInstanceOperator"
+  title   = "7DTD instance operator"
+  permissions = [
+    "compute.firewalls.create",
+    "compute.firewalls.delete",
+    "compute.firewalls.get",
+    "compute.firewalls.list",
+    "compute.instances.get",
+    "compute.instances.getGuestAttributes",
+    "compute.instances.start",
+    "compute.instances.stop",
+    "compute.zoneOperations.get",
+  ]
 }
 
 # Cloud Run のサービスアカウントへ上記ロールを付与する。

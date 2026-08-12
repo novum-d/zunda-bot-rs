@@ -235,7 +235,10 @@ async fn handle_deferred_application_command(
         }
         ApplicationCommandRoute::SevenDaysStart
         | ApplicationCommandRoute::SevenDaysStatus
-        | ApplicationCommandRoute::SevenDaysStop => {
+        | ApplicationCommandRoute::SevenDaysStop
+        | ApplicationCommandRoute::SevenDaysIpList
+        | ApplicationCommandRoute::SevenDaysIpAdd
+        | ApplicationCommandRoute::SevenDaysIpRemove => {
             let Some(usecase) = &data.seven_days_usecase else {
                 return Ok(discord_response(message(
                     "7DTD サーバーは設定されていないのだ。",
@@ -247,7 +250,13 @@ async fn handle_deferred_application_command(
                 user_id: member_id,
                 role_ids: &role_ids,
             };
-            let admin = route == ApplicationCommandRoute::SevenDaysStop;
+            let admin = matches!(
+                route,
+                ApplicationCommandRoute::SevenDaysStop
+                    | ApplicationCommandRoute::SevenDaysIpList
+                    | ApplicationCommandRoute::SevenDaysIpAdd
+                    | ApplicationCommandRoute::SevenDaysIpRemove
+            );
             if !usecase.authorize(&caller, admin) {
                 tracing::warn!(?guild_id, ?channel_id, user_id = ?member_id, command = ?route, "unauthorized 7DTD command");
                 return Ok(discord_response(message(
@@ -259,6 +268,21 @@ async fn handle_deferred_application_command(
                 ApplicationCommandRoute::SevenDaysStart => usecase.start().await,
                 ApplicationCommandRoute::SevenDaysStatus => usecase.status().await,
                 ApplicationCommandRoute::SevenDaysStop => usecase.stop().await,
+                ApplicationCommandRoute::SevenDaysIpList => usecase.list_allowed_ips().await,
+                ApplicationCommandRoute::SevenDaysIpAdd => {
+                    let address = command_data
+                        .nested_subcommand_option_value("address")
+                        .and_then(Value::as_str)
+                        .context("address option missing")?;
+                    usecase.add_allowed_ip(address).await
+                }
+                ApplicationCommandRoute::SevenDaysIpRemove => {
+                    let address = command_data
+                        .nested_subcommand_option_value("address")
+                        .and_then(Value::as_str)
+                        .context("address option missing")?;
+                    usecase.remove_allowed_ip(address).await
+                }
                 _ => unreachable!(),
             };
             match result {
@@ -538,6 +562,9 @@ pub enum ApplicationCommandRoute {
     SevenDaysStart,
     SevenDaysStatus,
     SevenDaysStop,
+    SevenDaysIpList,
+    SevenDaysIpAdd,
+    SevenDaysIpRemove,
 }
 
 impl ApplicationCommandRoute {
@@ -564,6 +591,12 @@ impl ApplicationCommandRoute {
                 "start" => Some(Self::SevenDaysStart),
                 "status" => Some(Self::SevenDaysStatus),
                 "stop" => Some(Self::SevenDaysStop),
+                "ip" => match data.options.first()?.options.first()?.name.as_str() {
+                    "list" => Some(Self::SevenDaysIpList),
+                    "add" => Some(Self::SevenDaysIpAdd),
+                    "remove" => Some(Self::SevenDaysIpRemove),
+                    _ => None,
+                },
                 _ => None,
             },
             _ => None,
@@ -625,6 +658,18 @@ struct ApplicationCommandData {
 impl ApplicationCommandData {
     fn subcommand_option_value(&self, option_name: &str) -> Option<&Value> {
         self.options
+            .first()?
+            .options
+            .iter()
+            .find(|option| option.name == option_name)?
+            .value
+            .as_ref()
+    }
+
+    fn nested_subcommand_option_value(&self, option_name: &str) -> Option<&Value> {
+        self.options
+            .first()?
+            .options
             .first()?
             .options
             .iter()
@@ -744,6 +789,22 @@ mod tests {
                 Some(expected)
             );
         }
+    }
+
+    #[test]
+    fn routes_seven_days_ip_command_and_reads_address() {
+        let data = command_data(
+            r#"{"type":2,"data":{"name":"7dtd","options":[{"name":"ip","options":[{"name":"add","options":[{"name":"address","value":"8.8.8.8"}]}]}]}}"#,
+        );
+        assert_eq!(
+            ApplicationCommandRoute::from_command_data(&data),
+            Some(ApplicationCommandRoute::SevenDaysIpAdd)
+        );
+        assert_eq!(
+            data.nested_subcommand_option_value("address")
+                .and_then(Value::as_str),
+            Some("8.8.8.8")
+        );
     }
 
     #[test]
