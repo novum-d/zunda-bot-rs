@@ -44,6 +44,18 @@ variable "backup_retention_days" {
   default = 30
 }
 
+# Cloud BillingのStandard usage cost exportを保存するBigQuery dataset。
+variable "billing_export_dataset_id" {
+  type    = string
+  default = "billing_export"
+}
+
+# 初回有効化時に前月からのbackfillを利用できるUS multi-regionを既定とする。
+variable "billing_export_location" {
+  type    = string
+  default = "US"
+}
+
 # VM とファイアウォールを配置する VPC ネットワーク。
 variable "network" {
   type    = string
