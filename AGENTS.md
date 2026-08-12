@@ -216,6 +216,25 @@ disown
 破壊的コマンド、権限昇格、バックグラウンド実行は禁止。
 -->
 
+### Allowed Compute Engine Lifecycle Commands
+
+Codex may run the following commands when the user explicitly authorizes stopping or starting a specific VM and the
+target project, zone, and instance name are known:
+
+```text
+gcloud compute instances stop
+gcloud compute instances start
+```
+
+Before running either command, Codex must confirm the target VM with a read-only command such as
+`gcloud compute instances describe`. This exception does not allow `shutdown`, `reboot`, `systemctl`, instance deletion,
+disk deletion, or Terraform resource replacement.
+
+<!--
+GCP VM の停止・開始は、対象の project・zone・instance が明確で、ユーザーが明示的に許可した場合のみ実行してよい。
+shutdown・reboot・systemctl や、VM・ディスクの削除、Terraform による置換は許可しない。
+-->
+
 ## PR Size Guidance
 
 Codex should keep changes as small as the issue reasonably allows.

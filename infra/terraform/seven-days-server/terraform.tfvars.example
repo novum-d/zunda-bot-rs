@@ -1,0 +1,4 @@
+project_id = "your-project"
+cloud_run_service_account_email = "zunda-bot@your-project.iam.gserviceaccount.com"
+billing_account_id = "000000-000000-000000"
+game_source_ranges = ["203.0.113.10/32"]
