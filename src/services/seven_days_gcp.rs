@@ -21,6 +21,13 @@ pub struct InstanceStatus {
     pub last_start: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuestRuntimeState {
+    pub state: String,
+    pub boot_id: String,
+    pub started_at: String,
+}
+
 #[derive(Deserialize)]
 struct AccessToken {
     access_token: String,
@@ -45,6 +52,12 @@ struct NetworkInterface {
 struct AccessConfig {
     #[serde(rename = "natIP")]
     nat_i_p: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct GuestAttributeResponse {
+    #[serde(rename = "variableValue")]
+    variable_value: Option<String>,
 }
 
 impl ComputeClient {
@@ -99,6 +112,26 @@ impl ComputeClient {
             external_ip,
             last_start: response.last_start_timestamp,
         })
+    }
+
+    pub async fn guest_runtime_state(&self) -> Result<Option<GuestRuntimeState>> {
+        let response = self
+            .http
+            .get(format!("{}/getGuestAttributes", self.instance_url()))
+            .query(&[("queryPath", "seven-days/runtime-state")])
+            .bearer_auth(self.token().await?)
+            .send()
+            .await?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let value = response
+            .error_for_status()
+            .context("Compute Engine guest attribute lookup failed")?
+            .json::<GuestAttributeResponse>()
+            .await?
+            .variable_value;
+        value.as_deref().map(parse_guest_runtime_state).transpose()
     }
 
     pub async fn start(&self) -> Result<()> {
@@ -163,6 +196,25 @@ fn redact_request_url(error: reqwest::Error) -> anyhow::Error {
     anyhow::Error::new(error.without_url())
 }
 
+fn parse_guest_runtime_state(value: &str) -> Result<GuestRuntimeState> {
+    let mut fields = value.split('|');
+    let state = fields.next().unwrap_or_default();
+    let boot_id = fields.next().unwrap_or_default();
+    let started_at = fields.next().unwrap_or_default();
+    anyhow::ensure!(
+        !state.is_empty()
+            && !boot_id.is_empty()
+            && !started_at.is_empty()
+            && fields.next().is_none(),
+        "invalid 7DTD guest runtime state"
+    );
+    Ok(GuestRuntimeState {
+        state: state.into(),
+        boot_id: boot_id.into(),
+        started_at: started_at.into(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,5 +233,19 @@ mod tests {
                 .as_deref(),
             Some("203.0.113.10")
         );
+    }
+
+    #[test]
+    fn parses_guest_runtime_state() {
+        assert_eq!(
+            parse_guest_runtime_state("READY|boot-id|2026-08-12T03:00:00Z")
+                .expect("guest state should parse"),
+            GuestRuntimeState {
+                state: "READY".into(),
+                boot_id: "boot-id".into(),
+                started_at: "2026-08-12T03:00:00Z".into(),
+            }
+        );
+        assert!(parse_guest_runtime_state("READY|boot-id").is_err());
     }
 }

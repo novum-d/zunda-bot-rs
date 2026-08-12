@@ -16,17 +16,20 @@ if [ -r "$TELNET_PASSWORD_FILE" ]; then
   PASSWORD=$(<"$TELNET_PASSWORD_FILE")
 
   # パスワード入力後に保存を実行し、30秒の告知時間を置いてからサーバーを停止する。
-  {
+  if ! {
     printf '%s\n' "$PASSWORD"
     sleep 1
     printf 'say Server shutting down in 30 seconds\nsaveworld\n'
     sleep 30
     printf 'shutdown\n'
-  } | telnet "$TELNET_HOST" "$TELNET_PORT" >/dev/null
+  } | timeout 40 telnet "$TELNET_HOST" "$TELNET_PORT" >/dev/null; then
+    printf 'Telnet による安全停止要求が完了しませんでした\n' >&2
+  fi
 fi
 
-# 停止要求後、最大120秒間プロセスが終了するのを待つ。
-for _ in $(seq 1 60); do
+# 通知時間を含めて Compute Engine の通常停止猶予120秒以内へ収めるため、
+# 停止要求後のプロセス終了待ちは最大64秒とする。
+for _ in $(seq 1 32); do
   pgrep -f '7DaysToDieServer' >/dev/null || exit 0
   sleep 2
 done

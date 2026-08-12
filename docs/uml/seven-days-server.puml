@@ -7,13 +7,23 @@ participant DuckDNS
 participant "7DTD VM\nsystemd" as VM
 database "Persistent Disk" as Disk
 cloud "Cloud Storage\nbackup bucket" as Storage
+database "PostgreSQL\noperation lock" as OperationLock
 User -> Discord: /7dtd start|status|stop
 Discord -> Bot: signed interaction
 Bot -> Bot: Guild/Channel/User/Role authorization
+Bot -> OperationLock: pg_try_advisory_xact_lock (start/stop)
+alt another start/stop is running
+  OperationLock --> Bot: false
+  Bot --> Discord: 使用中メッセージ（VM APIを呼ばない）
+  break no operation
+else lock acquired
 Bot -> Compute: get/start/stop
 Compute -> VM: power lifecycle
+end
 Bot -> DuckDNS: update temporary IPv4
-Bot -> VM: TCP 26900 readiness
+VM -> VM: TCP 26900 readiness
+VM -> Compute: Guest Attributes READY
+Bot -> Compute: current boot READY lookup
 VM -> Disk: Saves / GeneratedWorlds / Mods
 VM -> Disk: saveworld before shutdown
 VM -> Storage: compressed backup upload

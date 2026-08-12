@@ -91,6 +91,7 @@ resource "google_compute_instance" "server" {
   # install.sh 側で各値を Base64 デコードして利用する。
   metadata = {
     enable-osconfig          = "TRUE"
+    enable-guest-attributes  = "TRUE"
     seven-days-safe-stop     = base64encode(file("${path.module}/../../seven-days/safe-stop.sh"))
     seven-days-backup        = base64encode(file("${path.module}/../../seven-days/backup.sh"))
     seven-days-backup-bucket = base64encode(google_storage_bucket.backup.name)
@@ -112,7 +113,7 @@ resource "google_compute_instance" "server" {
 resource "google_project_iam_custom_role" "operator" {
   role_id     = "sevenDaysInstanceOperator"
   title       = "7DTD instance operator"
-  permissions = ["compute.instances.get", "compute.instances.start", "compute.instances.stop", "compute.zoneOperations.get"]
+  permissions = ["compute.instances.get", "compute.instances.getGuestAttributes", "compute.instances.start", "compute.instances.stop", "compute.zoneOperations.get"]
 }
 
 # Cloud Run のサービスアカウントへ上記ロールを付与する。

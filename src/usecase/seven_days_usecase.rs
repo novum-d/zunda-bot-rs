@@ -1,4 +1,6 @@
-use crate::services::seven_days_gcp::{ComputeClient, DuckDnsClient, InstanceStatus};
+use crate::services::seven_days_gcp::{
+    ComputeClient, DuckDnsClient, GuestRuntimeState, InstanceStatus,
+};
 use crate::services::seven_days_operation_lock::SevenDaysOperationLock;
 use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
@@ -9,6 +11,7 @@ use tokio::time::Instant;
 
 const START_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
+const STOP_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 
 #[derive(Clone)]
 pub struct SevenDaysUsecase {
@@ -117,10 +120,11 @@ impl SevenDaysUsecase {
         }
         let ip = status
             .external_ip
+            .clone()
             .context("VM started but external IPv4 was unavailable")?;
         self.duckdns.update(&ip).await?;
         while Instant::now() < deadline {
-            if tcp_ready(&ip, self.port).await {
+            if self.runtime_ready(&status).await? {
                 return Ok(format!(
                     "READY なのだ！ `{}` / `{}:{}`",
                     self.domain, ip, self.port
@@ -136,8 +140,8 @@ impl SevenDaysUsecase {
         let uptime = uptime_minutes(&status, Utc::now())
             .map(|minutes| format!("{minutes}分"))
             .unwrap_or_else(|| "なし".into());
+        let ready = status.state == "RUNNING" && self.runtime_ready(&status).await?;
         let ip = status.external_ip.unwrap_or_else(|| "なし".into());
-        let ready = status.state == "RUNNING" && tcp_ready(&ip, self.port).await;
         Ok(format!(
             "VM: {}\nゲーム: {}\n接続先: `{}:{}`\n外部 IPv4: `{}`\n稼働時間: {}",
             status.state,
@@ -159,16 +163,24 @@ impl SevenDaysUsecase {
             "VM is {state}; refusing a duplicate stop request"
         );
         self.compute.stop().await?;
-        Ok("安全停止を要求したのだ。systemd がワールド保存と正常終了を行ってから VM を停止するのだ。".into())
+        let deadline = Instant::now() + STOP_TIMEOUT;
+        while Instant::now() < deadline {
+            if self.compute.status().await?.state == "TERMINATED" {
+                return Ok("ワールドを保存して VM を安全に停止したのだ。".into());
+            }
+            tokio::time::sleep(POLL_INTERVAL).await;
+        }
+        Ok("安全停止はまだ処理中なのだ。`/7dtd status` で停止完了を確認してほしいのだ。".into())
+    }
+
+    async fn runtime_ready(&self, status: &InstanceStatus) -> Result<bool> {
+        let Some(runtime) = self.compute.guest_runtime_state().await? else {
+            return Ok(false);
+        };
+        Ok(guest_runtime_is_current_and_ready(status, &runtime))
     }
 }
 
-async fn tcp_ready(ip: &str, port: u16) -> bool {
-    tokio::time::timeout(Duration::from_secs(2), TcpStream::connect((ip, port)))
-        .await
-        .map(|r| r.is_ok())
-        .unwrap_or(false)
-}
 fn optional_env(name: &str) -> Option<String> {
     env::var(name).ok().filter(|v| !v.trim().is_empty())
 }
@@ -208,6 +220,26 @@ fn uptime_minutes(status: &InstanceStatus, now: DateTime<Utc>) -> Option<i64> {
         .as_deref()
         .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
         .map(|started| (now - started.with_timezone(&Utc)).num_minutes().max(0))
+}
+
+fn guest_runtime_is_current_and_ready(
+    status: &InstanceStatus,
+    runtime: &GuestRuntimeState,
+) -> bool {
+    if status.state != "RUNNING" || runtime.state != "READY" {
+        return false;
+    }
+    let Some(instance_started) = status
+        .last_start
+        .as_deref()
+        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+    else {
+        return false;
+    };
+    let Some(runtime_started) = DateTime::parse_from_rfc3339(&runtime.started_at).ok() else {
+        return false;
+    };
+    runtime_started >= instance_started
 }
 
 #[cfg(test)]
@@ -278,5 +310,26 @@ mod tests {
             ..running
         };
         assert_eq!(uptime_minutes(&stopped, now), None);
+    }
+
+    #[test]
+    fn ready_state_must_belong_to_current_start() {
+        let status = InstanceStatus {
+            state: "RUNNING".into(),
+            external_ip: None,
+            last_start: Some("2026-08-12T03:00:00Z".into()),
+        };
+        let current = GuestRuntimeState {
+            state: "READY".into(),
+            boot_id: "new-boot".into(),
+            started_at: "2026-08-12T03:00:01Z".into(),
+        };
+        assert!(guest_runtime_is_current_and_ready(&status, &current));
+
+        let stale = GuestRuntimeState {
+            started_at: "2026-08-11T03:00:00Z".into(),
+            ..current
+        };
+        assert!(!guest_runtime_is_current_and_ready(&status, &stale));
     }
 }
