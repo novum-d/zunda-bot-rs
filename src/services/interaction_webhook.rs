@@ -254,6 +254,24 @@ async fn handle_deferred_application_command(
                     "このコマンドを実行する権限がないのだ。",
                 )));
             }
+            let _operation_lock = if requires_operation_lock(route) {
+                match usecase.try_operation_lock().await {
+                    Ok(Some(lock)) => Some(lock),
+                    Ok(None) => {
+                        return Ok(discord_response(message(
+                            "7DTD サーバーは現在、別の開始または停止処理中なのだ。完了してからもう一度試してほしいのだ。",
+                        )))
+                    }
+                    Err(error) => {
+                        tracing::error!(error = %error, "7DTD operation lock failed");
+                        return Ok(discord_response(message(
+                            "7DTD サーバーの操作受付を確認できないのだ。少し待ってから再試行してほしいのだ。",
+                        )))
+                    }
+                }
+            } else {
+                None
+            };
             tracing::info!(?guild_id, ?channel_id, user_id = ?member_id, command = ?route, "starting 7DTD command");
             let result = match route {
                 ApplicationCommandRoute::SevenDaysStart => usecase.start().await,
@@ -373,6 +391,13 @@ fn message(content: &str) -> Value {
             "flags": EPHEMERAL_FLAG
         }
     })
+}
+
+fn requires_operation_lock(route: ApplicationCommandRoute) -> bool {
+    matches!(
+        route,
+        ApplicationCommandRoute::SevenDaysStart | ApplicationCommandRoute::SevenDaysStop
+    )
 }
 
 fn starting_message() -> Value {
@@ -755,6 +780,19 @@ mod tests {
         assert!(ApplicationCommandRoute::SevenDaysStart.requires_seven_days_admin());
         assert!(ApplicationCommandRoute::SevenDaysStop.requires_seven_days_admin());
         assert!(!ApplicationCommandRoute::SevenDaysStatus.requires_seven_days_admin());
+    }
+
+    #[test]
+    fn only_start_and_stop_take_the_operation_lock() {
+        assert!(requires_operation_lock(
+            ApplicationCommandRoute::SevenDaysStart
+        ));
+        assert!(requires_operation_lock(
+            ApplicationCommandRoute::SevenDaysStop
+        ));
+        assert!(!requires_operation_lock(
+            ApplicationCommandRoute::SevenDaysStatus
+        ));
     }
 
     #[test]
