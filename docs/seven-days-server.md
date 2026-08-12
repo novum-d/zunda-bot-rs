@@ -22,7 +22,7 @@ SEVEN_DAYS_BILLING_PROJECT, SEVEN_DAYS_BILLING_DATASET, SEVEN_DAYS_BILLING_TABLE
 SEVEN_DAYS_BILLING_MAX_BYTES
 ```
 
-ID のリストはカンマ区切り。一般 ID は start/status、管理 ID は start/status/stop を実行できる。
+ID のリストはカンマ区切り。一般 ID は status、管理 ID は start/status/stop を実行できる。
 Billing projectは未指定なら `SEVEN_DAYS_GCP_PROJECT`、1回のquery上限は未指定なら100 MB。datasetを指定しない場合は料金表示を無効化する。
 
 ゲームサーバーは身内の 2〜4 人だけで利用する。`game_source_ranges` には参加者の固定 IPv4 を `/32` で指定し、ゲーム用ポートへの接続元を限定する。VPN は利用しない。自宅回線の IP が変わった場合は、Terraform の値を更新して再 apply する。SSH などの管理用ポートを全世界へ公開しない。
@@ -38,9 +38,9 @@ Billing projectは未指定なら `SEVEN_DAYS_GCP_PROJECT`、1回のquery上限�
 
 ## 通常運用と障害対応
 
-- `/7dtd start`: TERMINATED の場合だけ起動し、外部 IPv4 を DuckDNS に登録して、VM 内で TCP 26900 を確認した現在の起動の READY 通知を待つ。
+- `/7dtd start`: 管理者限定。TERMINATED の場合だけ起動し、外部 IPv4 を DuckDNS に登録して、VM 内で TCP 26900 を確認した現在の起動の READY 通知を待つ。
 - `/7dtd status`: VM、Guest Attributes上のゲーム状態、ポート、domain、外部 IPv4、稼働時間を表示する。
-- `/7dtd stop`: Compute Engine の通常停止を要求する。systemd `ExecStop` がゲーム内通知、`saveworld`、`shutdown`、プロセス終了確認を通常停止猶予内に行い、Botは最大2分停止完了を待つ。停止完了後、Billing exportに反映済みの当月・当年net cost、通貨、集計反映時点を表示する。料金取得失敗は停止結果を失敗へ変更しない。
+- `/7dtd stop`: 管理者限定。Compute Engine の通常停止を要求する。systemd `ExecStop` がゲーム内通知、`saveworld`、`shutdown`、プロセス終了確認を通常停止猶予内に行い、Botは最大2分停止完了を待つ。停止完了後、Billing exportに反映済みの当月・当年net cost、通貨、集計反映時点を表示する。料金取得失敗は停止結果を失敗へ変更しない。
 - READY にならない場合は serial/startup logs、`systemctl status seven-days`、`journalctl -u seven-days`、firewall、`serverconfig.xml` を確認する。
 - DuckDNS 失敗時は Secret の version と Cloud Run service account の accessor IAM を確認する。token を URL やログに貼らない。
 - stop が完了しない場合は VM を強制停止せず journal と telnet password file を確認し、ゲーム内で保存後に再試行する。
