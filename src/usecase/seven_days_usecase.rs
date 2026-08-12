@@ -1,8 +1,8 @@
 use crate::services::seven_days_gcp::{
     ComputeClient, DuckDnsClient, GuestRuntimeState, InstanceStatus,
 };
-use crate::services::seven_days_secret::SecretManagerClient;
 use crate::services::seven_days_operation_lock::SevenDaysOperationLock;
+use crate::services::seven_days_secret::SecretManagerClient;
 use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
