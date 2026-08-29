@@ -1,9 +1,11 @@
+use crate::data::seven_days_repository::SevenDaysRepository;
+use crate::models::seven_days::{SevenDaysAuthorization, SevenDaysOperatorKind};
 use crate::services::seven_days_gcp::{ComputeClient, DuckDnsClient, InstanceStatus};
 use crate::services::seven_days_operation_lock::SevenDaysOperationLock;
 use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
-use std::{collections::HashSet, env, sync::Arc, time::Duration};
+use std::{env, sync::Arc, time::Duration};
 use tokio::net::TcpStream;
 use tokio::time::Instant;
 
@@ -16,37 +18,8 @@ pub struct SevenDaysUsecase {
     duckdns: DuckDnsClient,
     domain: String,
     port: u16,
-    auth: Authorization,
+    repository: SevenDaysRepository,
     operation_pool: Arc<PgPool>,
-}
-
-#[derive(Clone)]
-struct Authorization {
-    guild_id: i64,
-    channel_id: i64,
-    users: HashSet<i64>,
-    roles: HashSet<i64>,
-    admin_users: HashSet<i64>,
-    admin_roles: HashSet<i64>,
-}
-
-impl Authorization {
-    fn allowed(&self, caller: &Caller<'_>, admin: bool) -> bool {
-        if caller.guild_id != Some(self.guild_id) || caller.channel_id != Some(self.channel_id) {
-            return false;
-        }
-        let Some(user) = caller.user_id else {
-            return false;
-        };
-        let base = self.users.contains(&user)
-            || caller.role_ids.iter().any(|role| self.roles.contains(role));
-        let elevated = self.admin_users.contains(&user)
-            || caller
-                .role_ids
-                .iter()
-                .any(|role| self.admin_roles.contains(role));
-        elevated || (!admin && base)
-    }
 }
 
 pub struct Caller<'a> {
@@ -64,8 +37,8 @@ impl SevenDaysUsecase {
         let required = |name: &str| {
             env::var(name).with_context(|| format!("'{name}' is required when 7DTD is enabled"))
         };
-        let parse = |name: &str| -> Result<i64> { Ok(required(name)?.parse()?) };
         let (duckdns_subdomain, domain) = duckdns_names(&required("SEVEN_DAYS_DUCKDNS_DOMAIN")?)?;
+        let repository = SevenDaysRepository::new(operation_pool.clone());
         Ok(Some(Self {
             compute: ComputeClient::new(
                 project,
@@ -77,14 +50,7 @@ impl SevenDaysUsecase {
             port: optional_env("SEVEN_DAYS_PORT")
                 .unwrap_or_else(|| "26900".into())
                 .parse()?,
-            auth: Authorization {
-                guild_id: parse("SEVEN_DAYS_DISCORD_GUILD_ID")?,
-                channel_id: parse("SEVEN_DAYS_DISCORD_CHANNEL_ID")?,
-                users: id_set("SEVEN_DAYS_DISCORD_USER_IDS")?,
-                roles: id_set("SEVEN_DAYS_DISCORD_ROLE_IDS")?,
-                admin_users: id_set("SEVEN_DAYS_DISCORD_ADMIN_USER_IDS")?,
-                admin_roles: id_set("SEVEN_DAYS_DISCORD_ADMIN_ROLE_IDS")?,
-            },
+            repository,
             operation_pool,
         }))
     }
@@ -93,8 +59,72 @@ impl SevenDaysUsecase {
         SevenDaysOperationLock::try_acquire(&self.operation_pool).await
     }
 
-    pub fn authorize(&self, caller: &Caller<'_>, admin: bool) -> bool {
-        self.auth.allowed(caller, admin)
+    pub async fn authorize(&self, caller: &Caller<'_>, admin: bool) -> Result<bool> {
+        let Some(guild_id) = caller.guild_id else {
+            return Ok(false);
+        };
+        let Some(authorization) = self.repository.get_authorization(guild_id).await? else {
+            return Ok(false);
+        };
+        Ok(authorization_allows(&authorization, caller, admin))
+    }
+
+    pub async fn can_manage(&self, caller: &Caller<'_>) -> Result<bool> {
+        let (Some(guild_id), Some(user_id)) = (caller.guild_id, caller.user_id) else {
+            return Ok(false);
+        };
+        if self.repository.is_guild_admin(guild_id, user_id).await? {
+            return Ok(true);
+        }
+        let Some(authorization) = self.repository.get_authorization(guild_id).await? else {
+            return Ok(false);
+        };
+        Ok(admin_operator_allows(&authorization, caller))
+    }
+
+    pub async fn configure(
+        &self,
+        guild_id: i64,
+        channel_id: i64,
+        manager_user_id: i64,
+    ) -> Result<()> {
+        ensure_discord_id(guild_id)?;
+        ensure_discord_id(channel_id)?;
+        ensure_discord_id(manager_user_id)?;
+        self.repository
+            .upsert_config(guild_id, channel_id, manager_user_id)
+            .await
+    }
+
+    pub async fn set_operator(
+        &self,
+        guild_id: i64,
+        kind: SevenDaysOperatorKind,
+        operator_id: i64,
+        is_admin: bool,
+    ) -> Result<()> {
+        ensure_discord_id(guild_id)?;
+        ensure_discord_id(operator_id)?;
+        anyhow::ensure!(
+            self.repository.get_authorization(guild_id).await?.is_some(),
+            "7DTD configuration is missing"
+        );
+        self.repository
+            .upsert_operator(guild_id, kind, operator_id, is_admin)
+            .await
+    }
+
+    pub async fn remove_operator(
+        &self,
+        guild_id: i64,
+        kind: SevenDaysOperatorKind,
+        operator_id: i64,
+    ) -> Result<()> {
+        ensure_discord_id(guild_id)?;
+        ensure_discord_id(operator_id)?;
+        self.repository
+            .delete_operator(guild_id, kind, operator_id)
+            .await
     }
 
     pub async fn start(&self) -> Result<String> {
@@ -172,13 +202,58 @@ async fn tcp_ready(ip: &str, port: u16) -> bool {
 fn optional_env(name: &str) -> Option<String> {
     env::var(name).ok().filter(|v| !v.trim().is_empty())
 }
-fn id_set(name: &str) -> Result<HashSet<i64>> {
-    optional_env(name)
-        .unwrap_or_default()
-        .split(',')
-        .filter(|v| !v.trim().is_empty())
-        .map(|v| v.trim().parse().map_err(Into::into))
-        .collect()
+
+fn ensure_discord_id(value: i64) -> Result<()> {
+    anyhow::ensure!(value > 0, "Discord ID must be positive");
+    Ok(())
+}
+
+fn authorization_allows(
+    authorization: &SevenDaysAuthorization,
+    caller: &Caller<'_>,
+    admin: bool,
+) -> bool {
+    if !authorization.config.enabled
+        || caller.guild_id != Some(authorization.config.guild_id)
+        || caller.channel_id != Some(authorization.config.channel_id)
+    {
+        return false;
+    }
+    let Some(user_id) = caller.user_id else {
+        return false;
+    };
+    authorization.operators.iter().any(|operator| {
+        (!admin || operator.is_admin)
+            && operator_matches(
+                operator.operator_kind.as_str(),
+                operator.operator_id,
+                user_id,
+                caller.role_ids,
+            )
+    })
+}
+
+fn admin_operator_allows(authorization: &SevenDaysAuthorization, caller: &Caller<'_>) -> bool {
+    let Some(user_id) = caller.user_id else {
+        return false;
+    };
+    authorization.operators.iter().any(|operator| {
+        operator.is_admin
+            && operator_matches(
+                operator.operator_kind.as_str(),
+                operator.operator_id,
+                user_id,
+                caller.role_ids,
+            )
+    })
+}
+
+fn operator_matches(kind: &str, operator_id: i64, user_id: i64, role_ids: &[i64]) -> bool {
+    match kind {
+        "user" => operator_id == user_id,
+        "role" => role_ids.contains(&operator_id),
+        _ => false,
+    }
 }
 
 fn duckdns_names(value: &str) -> Result<(String, String)> {
@@ -213,16 +288,44 @@ fn uptime_minutes(status: &InstanceStatus, now: DateTime<Utc>) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn auth() -> Authorization {
-        Authorization {
-            guild_id: 1,
-            channel_id: 2,
-            users: HashSet::from([3]),
-            roles: HashSet::from([4]),
-            admin_users: HashSet::from([5]),
-            admin_roles: HashSet::from([6]),
+    use crate::models::seven_days::{SevenDaysConfig, SevenDaysOperator};
+
+    fn authorization() -> SevenDaysAuthorization {
+        SevenDaysAuthorization {
+            config: SevenDaysConfig {
+                guild_id: 1,
+                channel_id: 2,
+                enabled: true,
+            },
+            operators: vec![
+                SevenDaysOperator {
+                    guild_id: 1,
+                    operator_kind: "user".into(),
+                    operator_id: 3,
+                    is_admin: false,
+                },
+                SevenDaysOperator {
+                    guild_id: 1,
+                    operator_kind: "role".into(),
+                    operator_id: 4,
+                    is_admin: false,
+                },
+                SevenDaysOperator {
+                    guild_id: 1,
+                    operator_kind: "user".into(),
+                    operator_id: 5,
+                    is_admin: true,
+                },
+                SevenDaysOperator {
+                    guild_id: 1,
+                    operator_kind: "role".into(),
+                    operator_id: 6,
+                    is_admin: true,
+                },
+            ],
         }
     }
+
     #[test]
     fn authorization_requires_location_and_id() {
         let caller = Caller {
@@ -231,21 +334,76 @@ mod tests {
             user_id: Some(3),
             role_ids: &[],
         };
-        assert!(auth().allowed(&caller, false));
-        assert!(!auth().allowed(&caller, true));
+        assert!(authorization_allows(&authorization(), &caller, false));
+        assert!(!authorization_allows(&authorization(), &caller, true));
         let wrong_channel = Caller {
             channel_id: Some(9),
             ..caller
         };
-        assert!(!auth().allowed(&wrong_channel, false));
+        assert!(!authorization_allows(
+            &authorization(),
+            &wrong_channel,
+            false
+        ));
         let admin = Caller {
             guild_id: Some(1),
             channel_id: Some(2),
             user_id: Some(5),
             role_ids: &[],
         };
-        assert!(auth().allowed(&admin, true));
-        assert!(auth().allowed(&admin, false));
+        assert!(authorization_allows(&authorization(), &admin, true));
+        assert!(authorization_allows(&authorization(), &admin, false));
+    }
+
+    #[test]
+    fn authorization_accepts_configured_roles_and_rejects_other_guilds() {
+        let role_operator = Caller {
+            guild_id: Some(1),
+            channel_id: Some(2),
+            user_id: Some(9),
+            role_ids: &[4],
+        };
+        assert!(authorization_allows(
+            &authorization(),
+            &role_operator,
+            false
+        ));
+        assert!(!authorization_allows(
+            &authorization(),
+            &role_operator,
+            true
+        ));
+        let other_guild = Caller {
+            guild_id: Some(7),
+            ..role_operator
+        };
+        assert!(!authorization_allows(&authorization(), &other_guild, false));
+    }
+
+    #[test]
+    fn disabled_configuration_rejects_operators() {
+        let mut authorization = authorization();
+        authorization.config.enabled = false;
+        let admin = Caller {
+            guild_id: Some(1),
+            channel_id: Some(2),
+            user_id: Some(5),
+            role_ids: &[],
+        };
+        assert!(!authorization_allows(&authorization, &admin, true));
+        assert!(admin_operator_allows(&authorization, &admin));
+    }
+
+    #[test]
+    fn admin_role_can_manage_configuration() {
+        let caller = Caller {
+            guild_id: Some(1),
+            channel_id: Some(9),
+            user_id: Some(10),
+            role_ids: &[6],
+        };
+
+        assert!(admin_operator_allows(&authorization(), &caller));
     }
 
     #[test]
