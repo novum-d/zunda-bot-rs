@@ -14,6 +14,7 @@ use crate::usecase::birth_notify_usecase::BirthNotifyUsecase;
 use crate::usecase::birth_reset_usecase::BirthResetUsecase;
 use crate::usecase::birth_signup_usecase::BirthSignupUsecase;
 use crate::usecase::guild_update_usecase::GuildUpdateUsecase;
+use crate::usecase::seven_days_usecase::SevenDaysUsecase;
 use anyhow::Context as _;
 use dotenvy::dotenv;
 use serenity::all::{ChannelType, Command, CommandOptionType, CreateCommand, CreateCommandOption};
@@ -95,6 +96,7 @@ async fn initialize_data() -> anyhow::Result<Data> {
         guild_update_usecase,
         reminder_service,
         discord_http: http,
+        seven_days_usecase: SevenDaysUsecase::from_env(pool)?,
     })
 }
 
@@ -127,11 +129,106 @@ async fn ensure_application_id(http: &Http) -> anyhow::Result<()> {
 }
 
 async fn register_global_commands(http: &Http) -> anyhow::Result<()> {
-    let commands = vec![hello_command(), birth_command(), setup_command()];
+    let commands = vec![
+        hello_command(),
+        birth_command(),
+        setup_command(),
+        seven_days_command(),
+    ];
     Command::set_global_commands(http, commands)
         .await
         .context("Failed to register global slash commands")?;
     Ok(())
+}
+
+fn seven_days_command() -> CreateCommand {
+    let subject_command = |name, description, kind, subject_name, subject_description| {
+        CreateCommandOption::new(CommandOptionType::SubCommand, name, description).add_sub_option(
+            CreateCommandOption::new(kind, subject_name, subject_description).required(true),
+        )
+    };
+
+    CreateCommand::new("7dtd")
+        .description("7 Days to Die 専用サーバーを操作するのだ")
+        .add_option(CreateCommandOption::new(
+            CommandOptionType::SubCommand,
+            "start",
+            "サーバーを起動するのだ",
+        ))
+        .add_option(CreateCommandOption::new(
+            CommandOptionType::SubCommand,
+            "status",
+            "サーバーの状態を確認するのだ",
+        ))
+        .add_option(CreateCommandOption::new(
+            CommandOptionType::SubCommand,
+            "stop",
+            "サーバーを安全に停止するのだ",
+        ))
+        .add_option(
+            CreateCommandOption::new(
+                CommandOptionType::SubCommand,
+                "setup",
+                "7DTD操作チャンネルを設定するのだ",
+            )
+            .add_sub_option(
+                CreateCommandOption::new(
+                    CommandOptionType::Channel,
+                    "channel",
+                    "7DTDコマンドを実行するチャンネル",
+                )
+                .required(true)
+                .channel_types(vec![ChannelType::Text]),
+            ),
+        )
+        .add_option(
+            subject_command(
+                "allow-user",
+                "7DTDを操作できるユーザーを追加・更新するのだ",
+                CommandOptionType::User,
+                "user",
+                "対象ユーザー",
+            )
+            .add_sub_option(
+                CreateCommandOption::new(
+                    CommandOptionType::Boolean,
+                    "admin",
+                    "起動・停止と設定変更を許可するか",
+                )
+                .required(true),
+            ),
+        )
+        .add_option(
+            subject_command(
+                "allow-role",
+                "7DTDを操作できるロールを追加・更新するのだ",
+                CommandOptionType::Role,
+                "role",
+                "対象ロール",
+            )
+            .add_sub_option(
+                CreateCommandOption::new(
+                    CommandOptionType::Boolean,
+                    "admin",
+                    "起動・停止と設定変更を許可するか",
+                )
+                .required(true),
+            ),
+        )
+        .add_option(subject_command(
+            "remove-user",
+            "7DTDを操作できるユーザーから削除するのだ",
+            CommandOptionType::User,
+            "user",
+            "対象ユーザー",
+        ))
+        .add_option(subject_command(
+            "remove-role",
+            "7DTDを操作できるロールから削除するのだ",
+            CommandOptionType::Role,
+            "role",
+            "対象ロール",
+        ))
 }
 
 fn hello_command() -> CreateCommand {

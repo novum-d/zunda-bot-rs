@@ -2,89 +2,86 @@
 entity "guild" as guild {
   +guild_id : BIGINT <<PK>>
   --
-  *name      : VARCHAR(255)
+  *name : VARCHAR(255)
 }
-note right of guild::guild_id
-ギルドを識別するID
-end note
-
-note right of guild::name
-ギルド名
-end note
 
 entity "guild_member" as member {
   +member_id : BIGINT <<PK>>
-  +guild_id  : BIGINT <<PK,FK>>
+  +guild_id : BIGINT <<PK,FK>>
   --
-  birth              : DATE
-  last_notified      : DATE
-  last_active_at     : TIMESTAMPTZ
-  last_reminded_at   : TIMESTAMPTZ
-  next_remind_at     : TIMESTAMPTZ
-  remind_count       : INTEGER
-  is_remind_opt_out  : BOOLEAN
-  reminder_guild_id  : BIGINT <<FK>>
-  reminder_channel_id : BIGINT
-  reminder_message_id : BIGINT
-  is_admin           : BOOLEAN
+  birth : DATE
+  last_notified : DATE
+  last_active_at : TIMESTAMPTZ
+  last_reminded_at : TIMESTAMPTZ
+  next_remind_at : TIMESTAMPTZ
+  remind_count : INTEGER
+  is_remind_opt_out : BOOLEAN
+  is_reminder_opted_in : BOOLEAN
+  is_admin : BOOLEAN
 }
-note right of member::member_id
-Discordユーザーを識別するID
-end note
 
-note right of member::guild_id
-ギルドを識別するID
-end note
+entity "guild_notification_channel" as notification_channel {
+  +guild_id : BIGINT <<PK,FK>>
+  +channel_id : BIGINT <<PK>>
+}
 
-note right of member::birth
-ギルドに所属するメンバーの誕生日
-end note
+entity "reminder_sent_message" as reminder_message {
+  +guild_id : BIGINT <<PK>>
+  +member_id : BIGINT <<PK>>
+  +channel_id : BIGINT <<PK>>
+  --
+  *message_id : BIGINT
+}
 
-note right of member::last_notified
-今年度の誕生日通知済み日
-end note
+entity "seven_days_config" as seven_days_config {
+  +guild_id : BIGINT <<PK,FK>>
+  --
+  *channel_id : BIGINT
+  *enabled : BOOLEAN
+}
 
-note right of member::last_active_at
-誕生日未登録リマインド判定に使う最終アクティブ日時
-end note
-
-note right of member::last_reminded_at
-誕生日未登録リマインドの最終送信日時
-end note
-
-note right of member::next_remind_at
-次回リマインド可能日時
-end note
-
-note right of member::remind_count
-誕生日未登録リマインドの送信回数
-end note
-
-note right of member::is_remind_opt_out
-誕生日未登録リマインド停止フラグ
-end note
-
-note right of member::reminder_guild_id
-誕生日未登録リマインドを送信するギルドID
-未設定の場合はリマインドを送信しない
-end note
-
-note right of member::reminder_channel_id
-最後に送信した誕生日未登録リマインドのチャンネルID
-誕生日登録時のメッセージ削除に使う
-end note
-
-note right of member::reminder_message_id
-最後に送信した誕生日未登録リマインドのメッセージID
-誕生日登録時のメッセージ削除に使う
-end note
+entity "seven_days_operator" as seven_days_operator {
+  +guild_id : BIGINT <<PK,FK>>
+  +operator_kind : VARCHAR(4) <<PK>>
+  +operator_id : BIGINT <<PK>>
+  --
+  *is_admin : BOOLEAN
+}
 
 note right of member::is_admin
-管理者コマンドを実行できるユーザーフラグ
-Discordサーバー権限ではなくDB上の値で判定する
+Guild単位の管理者コマンド権限
+7DTD初回setupのbootstrapにも使用する
 end note
 
-guild ||--o{ member : "ギルドに\n所属するメンバー"
-guild ||--o{ member : "リマインド通知先"
+note right of notification_channel::channel_id
+誕生日通知の送信先Channel
+end note
+
+note right of reminder_message::message_id
+誕生日登録後のリマインド削除に使用する
+end note
+
+note right of seven_days_config::channel_id
+7DTDコマンドの実行を許可するChannel
+end note
+
+note right of seven_days_config::enabled
+FALSEの場合は7DTD操作を拒否する
+end note
+
+note right of seven_days_operator::operator_kind
+user または role
+end note
+
+note right of seven_days_operator::is_admin
+FALSEはstatusのみ
+TRUEはstart/stopと設定変更も許可する
+end note
+
+guild ||--o{ member : "所属Member"
+guild ||--o{ notification_channel : "通知Channel"
+guild ||--o{ seven_days_config : "7DTD設定"
+seven_days_config ||--o{ seven_days_operator : "Operator"
+member ||--o{ reminder_message : "送信Message"
 
 @enduml
