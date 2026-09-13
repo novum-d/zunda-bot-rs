@@ -23,7 +23,7 @@ SEVEN_DAYS_DUCKDNS_DOMAIN, SEVEN_DAYS_DUCKDNS_TOKEN, SEVEN_DAYS_PORT
 
 ゲームサーバーは身内の 2〜4 人だけで利用する。`game_source_ranges` には参加者の固定 IPv4 を `/32` で指定し、ゲーム用ポートへの接続元を限定する。VPN は利用しない。自宅回線の IP が変わった場合は、Terraform の値を更新して再 apply する。SSH などの管理用ポートを全世界へ公開しない。
 
-`start` は Discord への defer 後も READY 確認を続ける。Cloud Tasks を使わない初期構成では処理中の instance 終了を避けるため、Cloud Run を `--min-instances=1 --no-cpu-throttling` に設定する。これは bot の待機費用を増やすため、将来 Cloud Tasks 化した時点で scale-to-zero に戻す。
+`start` は Discord への defer 後も VM が RUNNING になり外部 IPv4 を取得できるまで確認を続ける。取得後に DuckDNS を更新して応答する。ゲームポートは参加者の固定 IPv4 だけに制限しており Cloud Run からの TCP 疎通を保証できないため、ゲームの起動完了は参加端末から確認する。Cloud Tasks を使わない初期構成では処理中の instance 終了を避けるため、Cloud Run を `--min-instances=1 --no-cpu-throttling` に設定する。これは bot の待機費用を増やすため、将来 Cloud Tasks 化した時点で scale-to-zero に戻す。
 
 ## Windows セーブ移行
 
@@ -37,8 +37,8 @@ SEVEN_DAYS_DUCKDNS_DOMAIN, SEVEN_DAYS_DUCKDNS_TOKEN, SEVEN_DAYS_PORT
 - `/7dtd setup channel:<channel>`: Guild 単位の DB 管理者または既存の7DTD管理者限定。操作 Channel を登録し、実行者を7DTD管理者にする。
 - `/7dtd allow-user user:<user> admin:<bool>` / `/7dtd allow-role role:<role> admin:<bool>`: 7DTD Operator を追加・更新する。
 - `/7dtd remove-user user:<user>` / `/7dtd remove-role role:<role>`: 7DTD Operator を削除する。
-- `/7dtd start`: `admin:true` の Operator 限定。登録 Channel で実行し、TERMINATED の場合だけ起動して外部 IPv4 を DuckDNS に登録し、TCP 26900 が開くまで待つ。
-- `/7dtd status`: 登録済み Operator が登録 Channel で実行できる。VM、ポート、domain、外部 IPv4、稼働時間を表示する。
+- `/7dtd start`: `admin:true` の Operator 限定。登録 Channel で実行し、TERMINATED の場合だけ起動して外部 IPv4 を DuckDNS に登録する。ゲームの起動完了は接続を許可された参加端末から確認する。
+- `/7dtd status`: 登録済み Operator が登録 Channel で実行できる。VM、ポート、domain、外部 IPv4、稼働時間を表示する。Cloud Run からゲームポートへ到達できない場合、ゲーム状態は参加端末での確認が必要と表示する。
 - `/7dtd stop`: `admin:true` の Operator 限定。登録 Channel で Compute Engine の通常停止を要求する。systemd `ExecStop` がゲーム内通知、`saveworld`、`shutdown`、プロセス終了確認を行う。停止完了は status で確認する。
 - `/7dtd start` と `/7dtd stop` はPostgreSQLのトランザクションロックを取得してからVM操作を行う。別の開始・停止処理が実行中ならVM APIを呼ばず使用中メッセージを返す。Cloud Runが複数インスタンスでも同じDBロックを共有する。
 - READY にならない場合は serial/startup logs、`systemctl status seven-days`、`journalctl -u seven-days`、firewall、`serverconfig.xml` を確認する。

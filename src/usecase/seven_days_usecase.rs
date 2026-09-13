@@ -149,16 +149,10 @@ impl SevenDaysUsecase {
             .external_ip
             .context("VM started but external IPv4 was unavailable")?;
         self.duckdns.update(&ip).await?;
-        while Instant::now() < deadline {
-            if tcp_ready(&ip, self.port).await {
-                return Ok(format!(
-                    "READY なのだ！ `{}` / `{}:{}`",
-                    self.domain, ip, self.port
-                ));
-            }
-            tokio::time::sleep(POLL_INTERVAL).await;
-        }
-        anyhow::bail!("VM and DuckDNS are ready, but the game port did not become reachable")
+        Ok(format!(
+            "VM を起動して DuckDNS を更新したのだ！ゲームの起動完了は参加端末から確認してほしいのだ。 `{}` / `{}:{}`",
+            self.domain, ip, self.port
+        ))
     }
 
     pub async fn status(&self) -> Result<String> {
@@ -167,15 +161,16 @@ impl SevenDaysUsecase {
             .map(|minutes| format!("{minutes}分"))
             .unwrap_or_else(|| "なし".into());
         let ip = status.external_ip.unwrap_or_else(|| "なし".into());
-        let ready = status.state == "RUNNING" && tcp_ready(&ip, self.port).await;
+        let game = if status.state != "RUNNING" {
+            "NOT READY"
+        } else if tcp_ready(&ip, self.port).await {
+            "READY"
+        } else {
+            "確認不可（接続元制限のため参加端末で確認）"
+        };
         Ok(format!(
             "VM: {}\nゲーム: {}\n接続先: `{}:{}`\n外部 IPv4: `{}`\n稼働時間: {}",
-            status.state,
-            if ready { "READY" } else { "NOT READY" },
-            self.domain,
-            self.port,
-            ip,
-            uptime
+            status.state, game, self.domain, self.port, ip, uptime
         ))
     }
 

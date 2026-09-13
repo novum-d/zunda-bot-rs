@@ -27,15 +27,16 @@ struct AccessToken {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct InstanceResponse {
     status: String,
-    #[serde(rename = "lastStartTimestamp")]
     last_start_timestamp: Option<String>,
     #[serde(default)]
     network_interfaces: Vec<NetworkInterface>,
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct NetworkInterface {
     #[serde(default)]
     access_configs: Vec<AccessConfig>,
@@ -175,7 +176,7 @@ mod tests {
     #[test]
     fn parses_compute_external_ipv4() {
         let response: InstanceResponse = serde_json::from_str(
-            r#"{"status":"RUNNING","lastStartTimestamp":"2026-01-01T00:00:00Z","network_interfaces":[{"access_configs":[{"natIP":"203.0.113.10"}]}]}"#,
+            r#"{"status":"RUNNING","lastStartTimestamp":"2026-01-01T00:00:00Z","networkInterfaces":[{"accessConfigs":[{"natIP":"203.0.113.10"}]}]}"#,
         )
         .expect("Compute response should parse");
 
