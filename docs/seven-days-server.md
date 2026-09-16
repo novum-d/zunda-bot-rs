@@ -32,6 +32,90 @@ SEVEN_DAYS_DUCKDNS_DOMAIN, SEVEN_DAYS_DUCKDNS_TOKEN, SEVEN_DAYS_PORT
 3. 所有者を `seven-days:seven-days` にする。`serverconfig.xml` の `GameWorld` をワールドフォルダ名、`GameName` を Saves 内のセーブフォルダ名に合わせる。
 4. サーバーを起動して建築、所持品、プレイヤーデータを確認する。同じワールドをローカルとサーバーで並行更新しない。
 
+## 7DTD バージョンアップ
+
+Stable の更新でもクライアント、セーブ、Mod との互換性を先に確認し、参加者がいない時間帯に実施する。更新先は Steam の branch 名（例: `v3.2.0`）で固定し、`public` の暗黙更新に任せない。更新前後の branch、build ID、バックアップの GCS オブジェクト名を運用記録へ残す。
+
+以下は `zunda-7dtd` を v3.2.0 へ更新したときの手順である。プロジェクトなどは実環境に合わせる。
+
+```sh
+SEVEN_DAYS_PROJECT=project-d7a8d346-0d55-468c-ace
+SEVEN_DAYS_ZONE=asia-northeast1-b
+SEVEN_DAYS_INSTANCE=zunda-7dtd
+
+gcloud compute instances describe "$SEVEN_DAYS_INSTANCE" \
+  --project="$SEVEN_DAYS_PROJECT" \
+  --zone="$SEVEN_DAYS_ZONE" \
+  --format='yaml(name,status,networkInterfaces[0].accessConfigs[0].natIP)'
+
+gcloud compute ssh root@"$SEVEN_DAYS_INSTANCE" \
+  --project="$SEVEN_DAYS_PROJECT" \
+  --zone="$SEVEN_DAYS_ZONE"
+```
+
+VM 内では、まず現在の build ID、起動ディスクの空き容量、Mod の有無を確認する。SteamCMD は更新ファイルを一時展開するため、空き容量が不足する場合は更新を開始せず boot disk を拡張する。
+
+```sh
+sed -n '/buildid/p' /opt/seven-days/steamapps/appmanifest_294420.acf
+df -h /opt/seven-days
+find /srv/seven-days-data/Mods -mindepth 1 -maxdepth 1 -printf '%f\n'
+```
+
+`seven-days.service` は異常終了時に再起動する。更新中の再起動を防ぐため、実行ファイルの実行権限だけを一時的に外してから既存の安全停止処理を呼ぶ。停止後は必ず権限を戻し、ゲームプロセスが存在しないことを確認してからバックアップする。途中で想定外のプロセスが表示された場合は更新を続けない。
+
+```sh
+chmod 0644 /opt/seven-days/7DaysToDieServer.x86_64
+/usr/local/sbin/seven-days-safe-stop
+
+ps -o pid=,lstart=,cmd= -C 7DaysToDieServer.x86_64
+chmod 0755 /opt/seven-days/7DaysToDieServer.x86_64
+stat -c '%a %U:%G %n' /opt/seven-days/7DaysToDieServer.x86_64
+
+/usr/local/sbin/seven-days-backup
+```
+
+バックアップ成功時の `gs://.../backups/<timestamp>.tar.gz` を記録してから、専用ユーザーで対象 branch をインストール・検証する。パスワードや token はコマンドラインへ含めない。
+
+```sh
+SEVEN_DAYS_BRANCH=v3.2.0
+runuser -u seven-days -- /usr/games/steamcmd \
+  +force_install_dir /opt/seven-days \
+  +login anonymous \
+  +app_update 294420 -beta "$SEVEN_DAYS_BRANCH" validate \
+  +quit
+
+sed -n '/buildid/p' /opt/seven-days/steamapps/appmanifest_294420.acf
+stat -c '%a %U:%G %n' /opt/seven-days/7DaysToDieServer.x86_64
+exit
+```
+
+SteamCMD が成功し、期待する build IDと実行権限 `755`を確認できた場合だけVMを再起動する。停止・起動の直前には対象VMを再確認する。
+
+```sh
+gcloud compute instances describe "$SEVEN_DAYS_INSTANCE" \
+  --project="$SEVEN_DAYS_PROJECT" --zone="$SEVEN_DAYS_ZONE" \
+  --format='value(name,status,zone)'
+gcloud compute instances stop "$SEVEN_DAYS_INSTANCE" \
+  --project="$SEVEN_DAYS_PROJECT" --zone="$SEVEN_DAYS_ZONE"
+
+gcloud compute instances describe "$SEVEN_DAYS_INSTANCE" \
+  --project="$SEVEN_DAYS_PROJECT" --zone="$SEVEN_DAYS_ZONE" \
+  --format='value(name,status,zone)'
+gcloud compute instances start "$SEVEN_DAYS_INSTANCE" \
+  --project="$SEVEN_DAYS_PROJECT" --zone="$SEVEN_DAYS_ZONE"
+```
+
+起動後はログの `INF Version`、ゲームプロセス、TCP 26900 の待受を確認する。Dedicated Server のGPU非搭載環境ではshader警告が出ることがあるため、警告の有無だけで失敗と判断せず、プロセスとポートを確認する。
+
+```sh
+gcloud compute ssh root@"$SEVEN_DAYS_INSTANCE" \
+  --project="$SEVEN_DAYS_PROJECT" \
+  --zone="$SEVEN_DAYS_ZONE" \
+  --command="grep -h 'INF Version:' /opt/seven-days/output_log__*.txt | tail -1; ps -o pid=,etime=,cmd= -C 7DaysToDieServer.x86_64; ss -H -lnt 'sport = :26900'"
+```
+
+最後に Discord で `/7dtd start` を実行して現在の外部IPv4をDuckDNSへ同期し、`/7dtd status` と許可済み参加端末からの接続を確認する。起動しない場合はVMを強制停止せず、更新時に記録したGCSバックアップと以前のSteam branchを使って切り戻す。
+
 ## 通常運用と障害対応
 
 - `/7dtd setup channel:<channel>`: Guild 単位の DB 管理者または既存の7DTD管理者限定。操作 Channel を登録し、実行者を7DTD管理者にする。
