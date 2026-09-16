@@ -1,10 +1,12 @@
 use crate::handler::interaction::handle_component_interaction;
 use crate::models::common::Data;
+use crate::models::seven_days::SevenDaysOperatorKind;
 use crate::reminder::ui;
 use crate::res::colors::EMBED_COLOR_WARNING;
 use crate::usecase::birth_list_usecase::BirthListView;
 use crate::usecase::birth_reset_usecase::webhook_reset_button_custom_id;
 use crate::usecase::birth_signup_usecase::BirthSignupResult;
+use crate::usecase::seven_days_usecase::Caller;
 use anyhow::Context as _;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -152,7 +154,13 @@ async fn handle_deferred_application_command(
     route: ApplicationCommandRoute,
 ) -> anyhow::Result<WebhookHttpResponse> {
     let guild_id = interaction.guild_id;
+    let channel_id = interaction.channel_id;
     let member_id = interaction.user_id();
+    let role_ids = interaction
+        .member
+        .as_ref()
+        .map(|member| member.roles.clone())
+        .unwrap_or_default();
     let command_data = interaction
         .data
         .context("application command data missing")?;
@@ -225,6 +233,75 @@ async fn handle_deferred_application_command(
         }
         ApplicationCommandRoute::SetupRemoveNotificationChannel => {
             manage_notification_channel(data, guild_id, member_id, &command_data, false).await
+        }
+        ApplicationCommandRoute::SevenDaysSetup => {
+            configure_seven_days(data, guild_id, member_id, &role_ids, &command_data).await
+        }
+        ApplicationCommandRoute::SevenDaysAllowUser
+        | ApplicationCommandRoute::SevenDaysAllowRole
+        | ApplicationCommandRoute::SevenDaysRemoveUser
+        | ApplicationCommandRoute::SevenDaysRemoveRole => {
+            manage_seven_days_operator(data, guild_id, member_id, &role_ids, &command_data, route)
+                .await
+        }
+        ApplicationCommandRoute::SevenDaysStart
+        | ApplicationCommandRoute::SevenDaysStatus
+        | ApplicationCommandRoute::SevenDaysStop => {
+            let Some(usecase) = &data.seven_days_usecase else {
+                return Ok(discord_response(message(
+                    "7DTD サーバーは設定されていないのだ。",
+                )));
+            };
+            let caller = Caller {
+                guild_id,
+                channel_id,
+                user_id: member_id,
+                role_ids: &role_ids,
+            };
+            let admin = route.requires_seven_days_admin();
+            if !usecase.authorize(&caller, admin).await? {
+                tracing::warn!(?guild_id, ?channel_id, user_id = ?member_id, command = ?route, "unauthorized 7DTD command");
+                return Ok(discord_response(message(
+                    "このコマンドを実行する権限がないのだ。",
+                )));
+            }
+            let _operation_lock = if requires_operation_lock(route) {
+                match usecase.try_operation_lock().await {
+                    Ok(Some(lock)) => Some(lock),
+                    Ok(None) => {
+                        return Ok(discord_response(message(
+                            "7DTD サーバーは現在、別の開始または停止処理中なのだ。完了してからもう一度試してほしいのだ。",
+                        )))
+                    }
+                    Err(error) => {
+                        tracing::error!(error = %error, "7DTD operation lock failed");
+                        return Ok(discord_response(message(
+                            "7DTD サーバーの操作受付を確認できないのだ。少し待ってから再試行してほしいのだ。",
+                        )))
+                    }
+                }
+            } else {
+                None
+            };
+            tracing::info!(?guild_id, ?channel_id, user_id = ?member_id, command = ?route, "starting 7DTD command");
+            let result = match route {
+                ApplicationCommandRoute::SevenDaysStart => usecase.start().await,
+                ApplicationCommandRoute::SevenDaysStatus => usecase.status().await,
+                ApplicationCommandRoute::SevenDaysStop => usecase.stop().await,
+                _ => unreachable!(),
+            };
+            match result {
+                Ok(content) => {
+                    tracing::info!(command = ?route, "7DTD command completed");
+                    Ok(discord_response(message(&content)))
+                }
+                Err(error) => {
+                    tracing::error!(command = ?route, error = %error, "7DTD command failed");
+                    Ok(discord_response(message(
+                        "7DTD サーバーの操作に失敗したのだ。管理者にログ確認を依頼してほしいのだ。",
+                    )))
+                }
+            }
         }
     }
 }
@@ -313,6 +390,105 @@ async fn manage_notification_channel(
     Ok(discord_response(message(&content)))
 }
 
+async fn configure_seven_days(
+    data: &Data,
+    guild_id: Option<i64>,
+    member_id: Option<i64>,
+    role_ids: &[i64],
+    command_data: &ApplicationCommandData,
+) -> anyhow::Result<WebhookHttpResponse> {
+    let Some(usecase) = &data.seven_days_usecase else {
+        return Ok(discord_response(message(
+            "7DTD サーバーは設定されていないのだ。",
+        )));
+    };
+    let guild_id = guild_id.context("guild id missing")?;
+    let member_id = member_id.context("user id missing")?;
+    let caller = Caller {
+        guild_id: Some(guild_id),
+        channel_id: None,
+        user_id: Some(member_id),
+        role_ids,
+    };
+    if !usecase.can_manage(&caller).await? {
+        return Ok(discord_response(message(
+            "このコマンドを実行する権限がないのだ。",
+        )));
+    }
+    let channel_id = command_data
+        .subcommand_option_value("channel")
+        .and_then(value_as_i64)
+        .context("channel option missing")?;
+    usecase.configure(guild_id, channel_id, member_id).await?;
+    Ok(discord_response(message(&format!(
+        "7DTD 操作チャンネルを <#{channel_id}> に設定し、実行者を管理者として登録したのだ！"
+    ))))
+}
+
+async fn manage_seven_days_operator(
+    data: &Data,
+    guild_id: Option<i64>,
+    member_id: Option<i64>,
+    role_ids: &[i64],
+    command_data: &ApplicationCommandData,
+    route: ApplicationCommandRoute,
+) -> anyhow::Result<WebhookHttpResponse> {
+    let Some(usecase) = &data.seven_days_usecase else {
+        return Ok(discord_response(message(
+            "7DTD サーバーは設定されていないのだ。",
+        )));
+    };
+    let guild_id = guild_id.context("guild id missing")?;
+    let member_id = member_id.context("user id missing")?;
+    let caller = Caller {
+        guild_id: Some(guild_id),
+        channel_id: None,
+        user_id: Some(member_id),
+        role_ids,
+    };
+    if !usecase.can_manage(&caller).await? {
+        return Ok(discord_response(message(
+            "このコマンドを実行する権限がないのだ。",
+        )));
+    }
+
+    let (kind, option_name, remove) = match route {
+        ApplicationCommandRoute::SevenDaysAllowUser => (SevenDaysOperatorKind::User, "user", false),
+        ApplicationCommandRoute::SevenDaysAllowRole => (SevenDaysOperatorKind::Role, "role", false),
+        ApplicationCommandRoute::SevenDaysRemoveUser => (SevenDaysOperatorKind::User, "user", true),
+        ApplicationCommandRoute::SevenDaysRemoveRole => (SevenDaysOperatorKind::Role, "role", true),
+        _ => anyhow::bail!("unsupported 7DTD operator route"),
+    };
+    let operator_id = command_data
+        .subcommand_option_value(option_name)
+        .and_then(value_as_i64)
+        .context("7DTD operator option missing")?;
+    let mention = match kind {
+        SevenDaysOperatorKind::User => format!("<@{operator_id}>"),
+        SevenDaysOperatorKind::Role => format!("<@&{operator_id}>"),
+    };
+
+    let content = if remove {
+        usecase.remove_operator(guild_id, kind, operator_id).await?;
+        format!("{mention} を7DTDの操作許可から削除したのだ！")
+    } else {
+        let is_admin = command_data
+            .subcommand_option_value("admin")
+            .and_then(Value::as_bool)
+            .context("admin option missing")?;
+        usecase
+            .set_operator(guild_id, kind, operator_id, is_admin)
+            .await?;
+        let permission = if is_admin {
+            "起動・停止・設定変更"
+        } else {
+            "状態確認"
+        };
+        format!("{mention} に7DTDの{permission}権限を設定したのだ！")
+    };
+    Ok(discord_response(message(&content)))
+}
+
 fn discord_response(body: Value) -> WebhookHttpResponse {
     WebhookHttpResponse::json(200, body)
 }
@@ -325,6 +501,13 @@ fn message(content: &str) -> Value {
             "flags": EPHEMERAL_FLAG
         }
     })
+}
+
+fn requires_operation_lock(route: ApplicationCommandRoute) -> bool {
+    matches!(
+        route,
+        ApplicationCommandRoute::SevenDaysStart | ApplicationCommandRoute::SevenDaysStop
+    )
 }
 
 fn starting_message() -> Value {
@@ -477,7 +660,7 @@ fn value_as_i64(value: &Value) -> Option<i64> {
         .or_else(|| value.as_str()?.parse::<i64>().ok())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApplicationCommandRoute {
     Hello,
     BirthList,
@@ -487,9 +670,21 @@ pub enum ApplicationCommandRoute {
     SetupReminderChannel,
     SetupAddNotificationChannel,
     SetupRemoveNotificationChannel,
+    SevenDaysStart,
+    SevenDaysStatus,
+    SevenDaysStop,
+    SevenDaysSetup,
+    SevenDaysAllowUser,
+    SevenDaysAllowRole,
+    SevenDaysRemoveUser,
+    SevenDaysRemoveRole,
 }
 
 impl ApplicationCommandRoute {
+    fn requires_seven_days_admin(self) -> bool {
+        matches!(self, Self::SevenDaysStart | Self::SevenDaysStop)
+    }
+
     fn from_command_data(data: &ApplicationCommandData) -> Option<Self> {
         match data.name.as_str() {
             "hello" => Some(Self::Hello),
@@ -509,6 +704,17 @@ impl ApplicationCommandRoute {
                 "remove-notification-channel" => Some(Self::SetupRemoveNotificationChannel),
                 _ => None,
             },
+            "7dtd" => match data.options.first()?.name.as_str() {
+                "start" => Some(Self::SevenDaysStart),
+                "status" => Some(Self::SevenDaysStatus),
+                "stop" => Some(Self::SevenDaysStop),
+                "setup" => Some(Self::SevenDaysSetup),
+                "allow-user" => Some(Self::SevenDaysAllowUser),
+                "allow-role" => Some(Self::SevenDaysAllowRole),
+                "remove-user" => Some(Self::SevenDaysRemoveUser),
+                "remove-role" => Some(Self::SevenDaysRemoveRole),
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -523,6 +729,8 @@ struct DiscordInteraction {
     token: Option<String>,
     #[serde(default, deserialize_with = "deserialize_optional_i64")]
     guild_id: Option<i64>,
+    #[serde(default, deserialize_with = "deserialize_optional_i64")]
+    channel_id: Option<i64>,
     member: Option<InteractionMember>,
     user: Option<InteractionUser>,
     data: Option<ApplicationCommandData>,
@@ -541,6 +749,8 @@ impl DiscordInteraction {
 #[derive(Debug, Deserialize)]
 struct InteractionMember {
     user: Option<InteractionUser>,
+    #[serde(default, deserialize_with = "deserialize_i64_vec")]
+    roles: Vec<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -623,6 +833,18 @@ where
     value_as_i64(&value).ok_or_else(|| serde::de::Error::custom("invalid integer value"))
 }
 
+fn deserialize_i64_vec<'de, D>(deserializer: D) -> Result<Vec<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Vec::<Value>::deserialize(deserializer)?
+        .iter()
+        .map(|value| {
+            value_as_i64(value).ok_or_else(|| serde::de::Error::custom("invalid integer value"))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -657,6 +879,48 @@ mod tests {
     }
 
     #[test]
+    fn routes_seven_days_commands() {
+        for (subcommand, expected) in [
+            ("start", ApplicationCommandRoute::SevenDaysStart),
+            ("status", ApplicationCommandRoute::SevenDaysStatus),
+            ("stop", ApplicationCommandRoute::SevenDaysStop),
+            ("setup", ApplicationCommandRoute::SevenDaysSetup),
+            ("allow-user", ApplicationCommandRoute::SevenDaysAllowUser),
+            ("allow-role", ApplicationCommandRoute::SevenDaysAllowRole),
+            ("remove-user", ApplicationCommandRoute::SevenDaysRemoveUser),
+            ("remove-role", ApplicationCommandRoute::SevenDaysRemoveRole),
+        ] {
+            let data = command_data(&format!(
+                r#"{{"type":2,"data":{{"name":"7dtd","options":[{{"name":"{subcommand}"}}]}}}}"#
+            ));
+            assert_eq!(
+                ApplicationCommandRoute::from_command_data(&data),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn starting_and_stopping_seven_days_require_admin() {
+        assert!(ApplicationCommandRoute::SevenDaysStart.requires_seven_days_admin());
+        assert!(ApplicationCommandRoute::SevenDaysStop.requires_seven_days_admin());
+        assert!(!ApplicationCommandRoute::SevenDaysStatus.requires_seven_days_admin());
+    }
+
+    #[test]
+    fn only_start_and_stop_take_the_operation_lock() {
+        assert!(requires_operation_lock(
+            ApplicationCommandRoute::SevenDaysStart
+        ));
+        assert!(requires_operation_lock(
+            ApplicationCommandRoute::SevenDaysStop
+        ));
+        assert!(!requires_operation_lock(
+            ApplicationCommandRoute::SevenDaysStatus
+        ));
+    }
+
+    #[test]
     fn reads_channel_option_from_setup_subcommand() {
         let data = command_data(
             r#"{"type":2,"data":{"name":"setup","options":[{"name":"add-notification-channel","options":[{"name":"channel","value":"123"}]}]}}"#,
@@ -666,6 +930,23 @@ mod tests {
             data.subcommand_option_value("channel")
                 .and_then(value_as_i64),
             Some(123)
+        );
+    }
+
+    #[test]
+    fn reads_seven_days_operator_options() {
+        let data = command_data(
+            r#"{"type":2,"data":{"name":"7dtd","options":[{"name":"allow-role","options":[{"name":"role","value":"456"},{"name":"admin","value":true}]}]}}"#,
+        );
+
+        assert_eq!(
+            data.subcommand_option_value("role").and_then(value_as_i64),
+            Some(456)
+        );
+        assert_eq!(
+            data.subcommand_option_value("admin")
+                .and_then(Value::as_bool),
+            Some(true)
         );
     }
 
