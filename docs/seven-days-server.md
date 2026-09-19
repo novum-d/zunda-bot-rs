@@ -29,6 +29,51 @@ Billing projectは未指定なら `SEVEN_DAYS_GCP_PROJECT`、1回のquery上限�
 
 Cloud Run は Discord interaction を受ける Webhook として運用し、`--min-instances=0` を必須とする。`start` と `stop` は Compute Engine API へ要求を送った時点で応答し、起動時の READY 確認、DuckDNS 更新、停止完了と料金の確認は `/7dtd status` の実行時に行う。リクエスト後の処理継続を理由に最小インスタンス数を増やさない。
 
+### 既存VMへのREADY通知移行
+
+Guest Attributes導入前に構築済みのVMは、プロビジョニング完了マーカーにより通常のstartup scriptを省略するため、READY通知用ファイルを一度だけ移行する。移行スクリプトはTerraformで更新された安全停止処理もメタデータから同期する。先にCloud Run用custom roleへ`compute.instances.getGuestAttributes`を追加し、VMメタデータへ`enable-guest-attributes=TRUE`を設定する。
+
+`google_compute_instance.server`のTerraform planにVM置換が含まれる場合はapplyしない。既存データディスクを保持したまま移行するため、`migrate-runtime-state.sh`を一時的なstartup scriptとして設定し、通常停止・起動で配置した後、元の`install.sh`へ戻す。移行用startup scriptは稼働中のunitをreloadしないため、新しいunitを読み込ませる目的でもう一度通常停止・起動する。
+
+```sh
+SEVEN_DAYS_PROJECT=project-d7a8d346-0d55-468c-ace
+SEVEN_DAYS_ZONE=asia-northeast1-b
+SEVEN_DAYS_INSTANCE=zunda-7dtd
+
+gcloud compute instances add-metadata "$SEVEN_DAYS_INSTANCE" \
+  --project="$SEVEN_DAYS_PROJECT" --zone="$SEVEN_DAYS_ZONE" \
+  --metadata=enable-guest-attributes=TRUE \
+  --metadata-from-file=startup-script=infra/terraform/seven-days-server/migrate-runtime-state.sh
+
+# 対象名・zone・状態を確認してから通常停止・起動する。
+gcloud compute instances describe "$SEVEN_DAYS_INSTANCE" \
+  --project="$SEVEN_DAYS_PROJECT" --zone="$SEVEN_DAYS_ZONE" \
+  --format='value(name,status,zone)'
+gcloud compute instances stop "$SEVEN_DAYS_INSTANCE" \
+  --project="$SEVEN_DAYS_PROJECT" --zone="$SEVEN_DAYS_ZONE"
+gcloud compute instances start "$SEVEN_DAYS_INSTANCE" \
+  --project="$SEVEN_DAYS_PROJECT" --zone="$SEVEN_DAYS_ZONE"
+
+# serial logで migration completed を確認後、通常のstartup scriptへ戻す。
+gcloud compute instances add-metadata "$SEVEN_DAYS_INSTANCE" \
+  --project="$SEVEN_DAYS_PROJECT" --zone="$SEVEN_DAYS_ZONE" \
+  --metadata-from-file=startup-script=infra/seven-days/install.sh
+
+gcloud compute instances describe "$SEVEN_DAYS_INSTANCE" \
+  --project="$SEVEN_DAYS_PROJECT" --zone="$SEVEN_DAYS_ZONE" \
+  --format='value(name,status,zone)'
+gcloud compute instances stop "$SEVEN_DAYS_INSTANCE" \
+  --project="$SEVEN_DAYS_PROJECT" --zone="$SEVEN_DAYS_ZONE"
+gcloud compute instances start "$SEVEN_DAYS_INSTANCE" \
+  --project="$SEVEN_DAYS_PROJECT" --zone="$SEVEN_DAYS_ZONE"
+
+gcloud compute instances get-guest-attributes "$SEVEN_DAYS_INSTANCE" \
+  --project="$SEVEN_DAYS_PROJECT" --zone="$SEVEN_DAYS_ZONE" \
+  --query-path=seven-days/runtime-state
+```
+
+最後に`/7dtd status`でREADY、現在の外部IPv4、DuckDNSの同期を確認する。移行中にVMの置換、ディスクの削除、強制停止は行わない。
+
 ## Windows セーブ移行
 
 1. クライアントと dedicated server のバージョンを一致させ、両方を停止する。元データはコピーして原本を保管する。
