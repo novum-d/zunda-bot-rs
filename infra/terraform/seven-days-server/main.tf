@@ -38,6 +38,38 @@ resource "google_storage_bucket_iam_member" "backup_writer" {
   member = "serviceAccount:${data.google_project.current.number}-compute@developer.gserviceaccount.com"
 }
 
+# 7DTDプロジェクトの料金をCloud Billing exportから読み取るためのBigQuery基盤。
+# Billing export自体はCloud Billing Consoleでこのdatasetを選択して有効化する。
+resource "google_project_service" "bigquery" {
+  project            = var.project_id
+  service            = "bigquery.googleapis.com"
+  disable_on_destroy = false
+}
+
+resource "google_bigquery_dataset" "billing_export" {
+  project                    = var.project_id
+  dataset_id                 = var.billing_export_dataset_id
+  friendly_name              = "7DTD billing export"
+  description                = "Cloud Billing standard usage cost export for the 7DTD project"
+  location                   = var.billing_export_location
+  delete_contents_on_destroy = false
+  depends_on                 = [google_project_service.bigquery]
+}
+
+# Query jobの作成権限と、上記datasetだけの読み取り権限をCloud Runへ付与する。
+resource "google_project_iam_member" "cloud_run_bigquery_job_user" {
+  project = var.project_id
+  role    = "roles/bigquery.jobUser"
+  member  = "serviceAccount:${var.cloud_run_service_account_email}"
+}
+
+resource "google_bigquery_dataset_iam_member" "cloud_run_billing_viewer" {
+  project    = var.project_id
+  dataset_id = google_bigquery_dataset.billing_export.dataset_id
+  role       = "roles/bigquery.dataViewer"
+  member     = "serviceAccount:${var.cloud_run_service_account_email}"
+}
+
 # 7DTD のゲーム通信だけを許可するファイアウォール。
 # source_ranges は参加者の固定 IP (/32) を指定することを想定する。
 # 0.0.0.0/0 を使う場合でも、ここで指定したゲームポート以外は公開しない。
