@@ -73,6 +73,12 @@ Do not introduce:
 
 unless explicitly authorized by the issue.
 
+### Cloud Run scale-to-zero
+
+Cloud Run サービスは Webhook として運用するため、最小インスタンス数を 0 にして scale-to-zero を必須とする。
+リクエスト後のバックグラウンド処理、cold start の短縮、ポーリング待機を理由に `min-instances=1` 以上へ変更しない。
+長時間の完了待ちが必要な処理は、次回の Webhook リクエストで状態を確認するか、明示的に認可された外部タスクへ分離する。
+
 <!--
 デプロイは手動前提。
 Issue で明示されている場合のみ deploy workflow や IaC を追加する。

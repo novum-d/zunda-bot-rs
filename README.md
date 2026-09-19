@@ -164,25 +164,20 @@ gcloud run services logs read zunda-bot-rs \
   --limit=200
 ```
 
-5.9. 必要に応じて Cloud Run の常時起動設定を行う
+5.9. Cloud Run を scale-to-zero に設定する
 
-起動直後は先に HTTP サーバーを起動し、DB 接続、ギルド同期、slash command 登録はバックグラウンドで行います。Discord interaction は処理に時間がかかる場合、先に defer 応答してから followup を送るため、Cloud Run の常時起動は必須ではありません。
+このサービスは Discord interaction を受ける Webhook として運用するため、Cloud Run の最小インスタンス数は必ず 0 にします。Webhook リクエストがない時間の処理継続を理由に常時起動へ変更せず、必要な状態確認は次の Webhook リクエストで行います。
 
-初回アクセスの cold start レイテンシを抑えたい場合のみ、最小インスタンスを設定します。
-
-```shell
-gcloud run services update zunda-bot-rs \
-  --region asia-northeast1 \
-  --min-instances=1
-```
-
-コストを優先して scale to zero に戻す場合は、最小インスタンスを 0 にします。
+デプロイ後は次の設定を適用します。
 
 ```shell
-gcloud run services update zunda-bot-rs \
-  --region asia-northeast1 \
+gcloud run services update "${CLOUD_RUN_SERVICE}" \
+  --project "${GCP_PROJECT_ID}" \
+  --region "${GCP_REGION}" \
   --min-instances=0
 ```
+
+`min-instances=1` 以上への変更は禁止です。cold start の短縮やリクエスト後のバックグラウンド処理が必要な場合も、Cloud Run の常時起動ではなく処理フローを見直します。
 
 デプロイ済みサービスに Public Key だけを追加または更新する場合は、`GCP_PROJECT_ID` / `GCP_REGION` / `DISCORD_PUBLIC_KEY` を設定してから以下を実行します。
 
@@ -209,8 +204,7 @@ gcloud run services describe zunda-bot-rs \
 
 ## 7 Days to Die サーバー
 
-許可された Discord Guild／Channel／User・Role から `/7dtd status`、管理者から `/7dtd start` と `/7dtd stop` を実行できる。VM内で確認したゲームポートのREADY状態はGuest Attributes経由でBotへ通知し、停止完了時にはCloud Billing exportに反映済みの月次・年次料金を表示する。開始・停止はPostgreSQLのトランザクションロックで排他し、別の処理中はVM操作を実行せず使用中メッセージを返す。GCP 構築、Cloud Run 環境変数、セーブ移行、安全停止、料金表示、backup／復元は Runbook を参照する。
-READY までの非同期処理を確実に完了させるため、初期構成では Runbook 記載の Cloud Run CPU 設定が必要になる。
+許可された Discord Guild／Channel／User・Role から `/7dtd status`、管理者から `/7dtd start` と `/7dtd stop` を実行できる。start／stop は Compute Engine へ要求を送った時点で応答し、`/7dtd status` が VM 状態、現在の起動に対応するREADY、DuckDNS、停止後の料金を随時確認する。開始・停止はPostgreSQLのトランザクションロックで排他し、別の処理中はVM操作を実行せず使用中メッセージを返す。GCP 構築、Cloud Run 環境変数、セーブ移行、安全停止、料金表示、backup／復元は Runbook を参照する。
 
 ## デバッグ
 

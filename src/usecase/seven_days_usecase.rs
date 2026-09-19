@@ -6,12 +6,7 @@ use crate::services::seven_days_operation_lock::SevenDaysOperationLock;
 use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
-use std::{collections::HashSet, env, sync::Arc, time::Duration};
-use tokio::time::Instant;
-
-const START_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-const POLL_INTERVAL: Duration = Duration::from_secs(5);
-const STOP_TIMEOUT: Duration = Duration::from_secs(2 * 60);
+use std::{collections::HashSet, env, sync::Arc};
 
 #[derive(Clone)]
 pub struct SevenDaysUsecase {
@@ -116,38 +111,23 @@ impl SevenDaysUsecase {
     }
 
     pub async fn start(&self) -> Result<String> {
-        let deadline = Instant::now() + START_TIMEOUT;
-        let mut status = self.compute.status().await?;
+        let status = self.compute.status().await?;
         if status.state == "TERMINATED" {
             self.compute.start().await?;
+            return Ok(
+                "VM の起動を要求したのだ。`/7dtd status` で READY と接続先を確認してほしいのだ。"
+                    .into(),
+            );
         } else if status.state != "RUNNING" {
             return Ok(format!(
                 "VM は現在 {} なのだ。起動処理の完了を待ってほしいのだ。",
                 status.state
             ));
         }
-        while Instant::now() < deadline {
-            status = self.compute.status().await?;
-            if status.state == "RUNNING" && status.external_ip.is_some() {
-                break;
-            }
-            tokio::time::sleep(POLL_INTERVAL).await;
-        }
-        let ip = status
-            .external_ip
-            .clone()
-            .context("VM started but external IPv4 was unavailable")?;
-        self.duckdns.update(&ip).await?;
-        while Instant::now() < deadline {
-            if self.runtime_ready(&status).await? {
-                return Ok(format!(
-                    "READY なのだ！ `{}` / `{}:{}`",
-                    self.domain, ip, self.port
-                ));
-            }
-            tokio::time::sleep(POLL_INTERVAL).await;
-        }
-        anyhow::bail!("VM and DuckDNS are ready, but the game port did not become reachable")
+        Ok(
+            "VM はすでに起動しているのだ。`/7dtd status` で READY と接続先を確認してほしいのだ。"
+                .into(),
+        )
     }
 
     pub async fn status(&self) -> Result<String> {
@@ -156,8 +136,18 @@ impl SevenDaysUsecase {
             .map(|minutes| format!("{minutes}分"))
             .unwrap_or_else(|| "なし".into());
         let ready = status.state == "RUNNING" && self.runtime_ready(&status).await?;
-        let ip = status.external_ip.unwrap_or_else(|| "なし".into());
-        Ok(format!(
+        if ready {
+            self.duckdns
+                .update(
+                    status
+                        .external_ip
+                        .as_deref()
+                        .context("READY VM did not have an external IPv4")?,
+                )
+                .await?;
+        }
+        let ip = status.external_ip.clone().unwrap_or_else(|| "なし".into());
+        let message = format!(
             "VM: {}\nゲーム: {}\n接続先: `{}:{}`\n外部 IPv4: `{}`\n稼働時間: {}",
             status.state,
             if ready { "READY" } else { "NOT READY" },
@@ -165,7 +155,12 @@ impl SevenDaysUsecase {
             self.port,
             ip,
             uptime
-        ))
+        );
+        if status.state == "TERMINATED" {
+            Ok(self.with_costs(&message).await)
+        } else {
+            Ok(message)
+        }
     }
 
     pub async fn stop(&self) -> Result<String> {
@@ -178,23 +173,14 @@ impl SevenDaysUsecase {
             "VM is {state}; refusing a duplicate stop request"
         );
         self.compute.stop().await?;
-        let deadline = Instant::now() + STOP_TIMEOUT;
-        while Instant::now() < deadline {
-            if self.compute.status().await?.state == "TERMINATED" {
-                return Ok(self
-                    .with_costs("ワールドを保存して VM を安全に停止したのだ。")
-                    .await);
-            }
-            tokio::time::sleep(POLL_INTERVAL).await;
-        }
-        Ok("安全停止はまだ処理中なのだ。`/7dtd status` で停止完了を確認してほしいのだ。".into())
+        Ok("VM の安全停止を要求したのだ。`/7dtd status` で停止完了を確認してほしいのだ。".into())
     }
 
     async fn runtime_ready(&self, status: &InstanceStatus) -> Result<bool> {
         let Some(runtime) = self.compute.guest_runtime_state().await? else {
             return Ok(false);
         };
-        Ok(guest_runtime_is_current_and_ready(status, &runtime))
+        Ok(instance_is_ready(status, &runtime))
     }
 
     async fn with_costs(&self, message: &str) -> String {
@@ -254,11 +240,8 @@ fn uptime_minutes(status: &InstanceStatus, now: DateTime<Utc>) -> Option<i64> {
         .map(|started| (now - started.with_timezone(&Utc)).num_minutes().max(0))
 }
 
-fn guest_runtime_is_current_and_ready(
-    status: &InstanceStatus,
-    runtime: &GuestRuntimeState,
-) -> bool {
-    if status.state != "RUNNING" || runtime.state != "READY" {
+fn instance_is_ready(status: &InstanceStatus, runtime: &GuestRuntimeState) -> bool {
+    if status.state != "RUNNING" || status.external_ip.is_none() || runtime.state != "READY" {
         return false;
     }
     let Some(instance_started) = status
@@ -366,7 +349,7 @@ mod tests {
     fn ready_state_must_belong_to_current_start() {
         let status = InstanceStatus {
             state: "RUNNING".into(),
-            external_ip: None,
+            external_ip: Some("203.0.113.10".into()),
             last_start: Some("2026-08-12T03:00:00Z".into()),
         };
         let current = GuestRuntimeState {
@@ -374,13 +357,19 @@ mod tests {
             boot_id: "new-boot".into(),
             started_at: "2026-08-12T03:00:01Z".into(),
         };
-        assert!(guest_runtime_is_current_and_ready(&status, &current));
+        assert!(instance_is_ready(&status, &current));
+
+        let missing_ip = InstanceStatus {
+            external_ip: None,
+            ..status.clone()
+        };
+        assert!(!instance_is_ready(&missing_ip, &current));
 
         let stale = GuestRuntimeState {
             started_at: "2026-08-11T03:00:00Z".into(),
             ..current
         };
-        assert!(!guest_runtime_is_current_and_ready(&status, &stale));
+        assert!(!instance_is_ready(&status, &stale));
     }
 
     #[test]
