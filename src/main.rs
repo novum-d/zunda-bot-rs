@@ -142,6 +142,12 @@ async fn register_global_commands(http: &Http) -> anyhow::Result<()> {
 }
 
 fn seven_days_command() -> CreateCommand {
+    let subject_command = |name, description, kind, subject_name, subject_description| {
+        CreateCommandOption::new(CommandOptionType::SubCommand, name, description).add_sub_option(
+            CreateCommandOption::new(kind, subject_name, subject_description).required(true),
+        )
+    };
+
     CreateCommand::new("7dtd")
         .description("7 Days to Die 専用サーバーを操作するのだ")
         .add_option(CreateCommandOption::new(
@@ -158,6 +164,70 @@ fn seven_days_command() -> CreateCommand {
             CommandOptionType::SubCommand,
             "stop",
             "サーバーを安全に停止するのだ",
+        ))
+        .add_option(
+            CreateCommandOption::new(
+                CommandOptionType::SubCommand,
+                "setup",
+                "7DTD操作チャンネルを設定するのだ",
+            )
+            .add_sub_option(
+                CreateCommandOption::new(
+                    CommandOptionType::Channel,
+                    "channel",
+                    "7DTDコマンドを実行するチャンネル",
+                )
+                .required(true)
+                .channel_types(vec![ChannelType::Text]),
+            ),
+        )
+        .add_option(
+            subject_command(
+                "allow-user",
+                "7DTDを操作できるユーザーを追加・更新するのだ",
+                CommandOptionType::User,
+                "user",
+                "対象ユーザー",
+            )
+            .add_sub_option(
+                CreateCommandOption::new(
+                    CommandOptionType::Boolean,
+                    "admin",
+                    "起動・停止と設定変更を許可するか",
+                )
+                .required(true),
+            ),
+        )
+        .add_option(
+            subject_command(
+                "allow-role",
+                "7DTDを操作できるロールを追加・更新するのだ",
+                CommandOptionType::Role,
+                "role",
+                "対象ロール",
+            )
+            .add_sub_option(
+                CreateCommandOption::new(
+                    CommandOptionType::Boolean,
+                    "admin",
+                    "起動・停止と設定変更を許可するか",
+                )
+                .required(true),
+            ),
+        )
+        .add_option(subject_command(
+            "remove-user",
+            "7DTDを操作できるユーザーから削除するのだ",
+            CommandOptionType::User,
+            "user",
+            "対象ユーザー",
+        ))
+        .add_option(subject_command(
+            "remove-role",
+            "7DTDを操作できるロールから削除するのだ",
+            CommandOptionType::Role,
+            "role",
+            "対象ロール",
         ))
 }
 
