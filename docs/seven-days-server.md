@@ -74,6 +74,32 @@ gcloud compute instances get-guest-attributes "$SEVEN_DAYS_INSTANCE" \
 
 最後に`/7dtd status`でREADY、現在の外部IPv4、DuckDNSの同期を確認する。移行中にVMの置換、ディスクの削除、強制停止は行わない。
 
+### Persistent Diskの容量確認
+
+Persistent Diskの課金対象はファイルの実使用量ではなく、GCPで確保した容量である。まずGCP上の確保容量とディスク種別を確認し、次にVM内のファイルシステム使用量と大きいディレクトリを確認する。VMを停止してもPersistent Diskの課金は継続する。
+
+```sh
+SEVEN_DAYS_PROJECT=project-d7a8d346-0d55-468c-ace
+SEVEN_DAYS_ZONE=asia-northeast1-b
+SEVEN_DAYS_INSTANCE=zunda-7dtd
+
+gcloud compute disks describe "$SEVEN_DAYS_INSTANCE" \
+  --project="$SEVEN_DAYS_PROJECT" --zone="$SEVEN_DAYS_ZONE" \
+  --format='table(name,sizeGb,type.basename(),status,users.basename())'
+gcloud compute disks describe "$SEVEN_DAYS_INSTANCE-data" \
+  --project="$SEVEN_DAYS_PROJECT" --zone="$SEVEN_DAYS_ZONE" \
+  --format='table(name,sizeGb,type.basename(),status,users.basename())'
+
+gcloud compute ssh root@"$SEVEN_DAYS_INSTANCE" \
+  --project="$SEVEN_DAYS_PROJECT" --zone="$SEVEN_DAYS_ZONE" \
+  --command="lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINTS; df -hT / /srv/seven-days-data; du -xsh /opt/seven-days /srv/seven-days-data/Saves /srv/seven-days-data/GeneratedWorlds /srv/seven-days-data/Mods 2>/dev/null"
+```
+
+- `sizeGb`は確保済みで課金対象となる容量、`df`はファイルシステムの使用量と空き容量、`du`はディレクトリ別の実使用量として読む。
+- `df`と`du`の値は、ファイルシステムの管理領域や削除済みだがプロセスが開いているファイルなどにより一致しない場合がある。
+- 使用率が継続的に増える場合は`du`で増加元を特定し、不要ファイルを確認してから容量拡張を計画する。Persistent Diskは拡張できるが縮小できないため、見込みだけで拡張しない。
+- ゲーム更新前は`/opt/seven-days`の空き容量を別途確認する。SteamCMDの一時展開分が足りない場合は更新を開始しない。
+
 ## Windows セーブ移行
 
 1. クライアントと dedicated server のバージョンを一致させ、両方を停止する。元データはコピーして原本を保管する。
