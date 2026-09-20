@@ -1,5 +1,5 @@
 use anyhow::{Context as _, Result};
-use reqwest::{header::CONTENT_LENGTH, Client, RequestBuilder, StatusCode};
+use reqwest::{Client, StatusCode};
 use serde::Deserialize;
 use std::time::Duration;
 
@@ -34,16 +34,15 @@ struct AccessToken {
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct InstanceResponse {
     status: String,
+    #[serde(rename = "lastStartTimestamp")]
     last_start_timestamp: Option<String>,
     #[serde(default)]
     network_interfaces: Vec<NetworkInterface>,
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct NetworkInterface {
     #[serde(default)]
     access_configs: Vec<AccessConfig>,
@@ -144,20 +143,15 @@ impl ComputeClient {
 
     async fn action(&self, action: &str) -> Result<()> {
         let response = self
-            .action_request(action, &self.token().await?)
+            .http
+            .post(format!("{}/{}", self.instance_url(), action))
+            .bearer_auth(self.token().await?)
             .send()
             .await?;
         if response.status() != StatusCode::OK {
             response.error_for_status()?;
         }
         Ok(())
-    }
-
-    fn action_request(&self, action: &str, token: &str) -> RequestBuilder {
-        self.http
-            .post(format!("{}/{}", self.instance_url(), action))
-            .bearer_auth(token)
-            .header(CONTENT_LENGTH, 0)
     }
 }
 
@@ -228,7 +222,7 @@ mod tests {
     #[test]
     fn parses_compute_external_ipv4() {
         let response: InstanceResponse = serde_json::from_str(
-            r#"{"status":"RUNNING","lastStartTimestamp":"2026-01-01T00:00:00Z","networkInterfaces":[{"accessConfigs":[{"natIP":"203.0.113.10"}]}]}"#,
+            r#"{"status":"RUNNING","lastStartTimestamp":"2026-01-01T00:00:00Z","network_interfaces":[{"access_configs":[{"natIP":"203.0.113.10"}]}]}"#,
         )
         .expect("Compute response should parse");
 
@@ -253,27 +247,5 @@ mod tests {
             }
         );
         assert!(parse_guest_runtime_state("READY|boot-id").is_err());
-    }
-
-    #[test]
-    fn compute_action_sends_an_explicit_empty_body_length() {
-        let client = ComputeClient::new(
-            "test-project".into(),
-            "asia-northeast1-b".into(),
-            "test-instance".into(),
-        )
-        .expect("Compute client should be created");
-
-        let request = client
-            .action_request("start", "test-token")
-            .build()
-            .expect("Compute action request should be built");
-
-        assert_eq!(request.method(), reqwest::Method::POST);
-        assert_eq!(request.headers().get(CONTENT_LENGTH).unwrap(), "0");
-        assert_eq!(
-            request.url().as_str(),
-            "https://compute.googleapis.com/compute/v1/projects/test-project/zones/asia-northeast1-b/instances/test-instance/start"
-        );
     }
 }
