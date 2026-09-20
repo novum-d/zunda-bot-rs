@@ -1,5 +1,6 @@
 use crate::handler::interaction::handle_component_interaction;
 use crate::models::common::Data;
+use crate::models::seven_days::SevenDaysOperatorKind;
 use crate::reminder::ui;
 use crate::res::colors::EMBED_COLOR_WARNING;
 use crate::usecase::birth_list_usecase::BirthListView;
@@ -233,6 +234,16 @@ async fn handle_deferred_application_command(
         ApplicationCommandRoute::SetupRemoveNotificationChannel => {
             manage_notification_channel(data, guild_id, member_id, &command_data, false).await
         }
+        ApplicationCommandRoute::SevenDaysSetup => {
+            configure_seven_days(data, guild_id, member_id, &role_ids, &command_data).await
+        }
+        ApplicationCommandRoute::SevenDaysAllowUser
+        | ApplicationCommandRoute::SevenDaysAllowRole
+        | ApplicationCommandRoute::SevenDaysRemoveUser
+        | ApplicationCommandRoute::SevenDaysRemoveRole => {
+            manage_seven_days_operator(data, guild_id, member_id, &role_ids, &command_data, route)
+                .await
+        }
         ApplicationCommandRoute::SevenDaysStart
         | ApplicationCommandRoute::SevenDaysStatus
         | ApplicationCommandRoute::SevenDaysStop => {
@@ -248,7 +259,7 @@ async fn handle_deferred_application_command(
                 role_ids: &role_ids,
             };
             let admin = route.requires_seven_days_admin();
-            if !usecase.authorize(&caller, admin) {
+            if !usecase.authorize(&caller, admin).await? {
                 tracing::warn!(?guild_id, ?channel_id, user_id = ?member_id, command = ?route, "unauthorized 7DTD command");
                 return Ok(discord_response(message(
                     "このコマンドを実行する権限がないのだ。",
@@ -375,6 +386,105 @@ async fn manage_notification_channel(
         format!("<#{channel_id}> を通知チャンネルに追加したのだ！")
     } else {
         format!("<#{channel_id}> を通知チャンネルから削除したのだ！")
+    };
+    Ok(discord_response(message(&content)))
+}
+
+async fn configure_seven_days(
+    data: &Data,
+    guild_id: Option<i64>,
+    member_id: Option<i64>,
+    role_ids: &[i64],
+    command_data: &ApplicationCommandData,
+) -> anyhow::Result<WebhookHttpResponse> {
+    let Some(usecase) = &data.seven_days_usecase else {
+        return Ok(discord_response(message(
+            "7DTD サーバーは設定されていないのだ。",
+        )));
+    };
+    let guild_id = guild_id.context("guild id missing")?;
+    let member_id = member_id.context("user id missing")?;
+    let caller = Caller {
+        guild_id: Some(guild_id),
+        channel_id: None,
+        user_id: Some(member_id),
+        role_ids,
+    };
+    if !usecase.can_manage(&caller).await? {
+        return Ok(discord_response(message(
+            "このコマンドを実行する権限がないのだ。",
+        )));
+    }
+    let channel_id = command_data
+        .subcommand_option_value("channel")
+        .and_then(value_as_i64)
+        .context("channel option missing")?;
+    usecase.configure(guild_id, channel_id, member_id).await?;
+    Ok(discord_response(message(&format!(
+        "7DTD 操作チャンネルを <#{channel_id}> に設定し、実行者を管理者として登録したのだ！"
+    ))))
+}
+
+async fn manage_seven_days_operator(
+    data: &Data,
+    guild_id: Option<i64>,
+    member_id: Option<i64>,
+    role_ids: &[i64],
+    command_data: &ApplicationCommandData,
+    route: ApplicationCommandRoute,
+) -> anyhow::Result<WebhookHttpResponse> {
+    let Some(usecase) = &data.seven_days_usecase else {
+        return Ok(discord_response(message(
+            "7DTD サーバーは設定されていないのだ。",
+        )));
+    };
+    let guild_id = guild_id.context("guild id missing")?;
+    let member_id = member_id.context("user id missing")?;
+    let caller = Caller {
+        guild_id: Some(guild_id),
+        channel_id: None,
+        user_id: Some(member_id),
+        role_ids,
+    };
+    if !usecase.can_manage(&caller).await? {
+        return Ok(discord_response(message(
+            "このコマンドを実行する権限がないのだ。",
+        )));
+    }
+
+    let (kind, option_name, remove) = match route {
+        ApplicationCommandRoute::SevenDaysAllowUser => (SevenDaysOperatorKind::User, "user", false),
+        ApplicationCommandRoute::SevenDaysAllowRole => (SevenDaysOperatorKind::Role, "role", false),
+        ApplicationCommandRoute::SevenDaysRemoveUser => (SevenDaysOperatorKind::User, "user", true),
+        ApplicationCommandRoute::SevenDaysRemoveRole => (SevenDaysOperatorKind::Role, "role", true),
+        _ => anyhow::bail!("unsupported 7DTD operator route"),
+    };
+    let operator_id = command_data
+        .subcommand_option_value(option_name)
+        .and_then(value_as_i64)
+        .context("7DTD operator option missing")?;
+    let mention = match kind {
+        SevenDaysOperatorKind::User => format!("<@{operator_id}>"),
+        SevenDaysOperatorKind::Role => format!("<@&{operator_id}>"),
+    };
+
+    let content = if remove {
+        usecase.remove_operator(guild_id, kind, operator_id).await?;
+        format!("{mention} を7DTDの操作許可から削除したのだ！")
+    } else {
+        let is_admin = command_data
+            .subcommand_option_value("admin")
+            .and_then(Value::as_bool)
+            .context("admin option missing")?;
+        usecase
+            .set_operator(guild_id, kind, operator_id, is_admin)
+            .await?;
+        let permission = if is_admin {
+            "起動・停止・設定変更"
+        } else {
+            "状態確認"
+        };
+        format!("{mention} に7DTDの{permission}権限を設定したのだ！")
     };
     Ok(discord_response(message(&content)))
 }
@@ -563,6 +673,11 @@ pub enum ApplicationCommandRoute {
     SevenDaysStart,
     SevenDaysStatus,
     SevenDaysStop,
+    SevenDaysSetup,
+    SevenDaysAllowUser,
+    SevenDaysAllowRole,
+    SevenDaysRemoveUser,
+    SevenDaysRemoveRole,
 }
 
 impl ApplicationCommandRoute {
@@ -593,6 +708,11 @@ impl ApplicationCommandRoute {
                 "start" => Some(Self::SevenDaysStart),
                 "status" => Some(Self::SevenDaysStatus),
                 "stop" => Some(Self::SevenDaysStop),
+                "setup" => Some(Self::SevenDaysSetup),
+                "allow-user" => Some(Self::SevenDaysAllowUser),
+                "allow-role" => Some(Self::SevenDaysAllowRole),
+                "remove-user" => Some(Self::SevenDaysRemoveUser),
+                "remove-role" => Some(Self::SevenDaysRemoveRole),
                 _ => None,
             },
             _ => None,
@@ -764,6 +884,11 @@ mod tests {
             ("start", ApplicationCommandRoute::SevenDaysStart),
             ("status", ApplicationCommandRoute::SevenDaysStatus),
             ("stop", ApplicationCommandRoute::SevenDaysStop),
+            ("setup", ApplicationCommandRoute::SevenDaysSetup),
+            ("allow-user", ApplicationCommandRoute::SevenDaysAllowUser),
+            ("allow-role", ApplicationCommandRoute::SevenDaysAllowRole),
+            ("remove-user", ApplicationCommandRoute::SevenDaysRemoveUser),
+            ("remove-role", ApplicationCommandRoute::SevenDaysRemoveRole),
         ] {
             let data = command_data(&format!(
                 r#"{{"type":2,"data":{{"name":"7dtd","options":[{{"name":"{subcommand}"}}]}}}}"#
@@ -805,6 +930,23 @@ mod tests {
             data.subcommand_option_value("channel")
                 .and_then(value_as_i64),
             Some(123)
+        );
+    }
+
+    #[test]
+    fn reads_seven_days_operator_options() {
+        let data = command_data(
+            r#"{"type":2,"data":{"name":"7dtd","options":[{"name":"allow-role","options":[{"name":"role","value":"456"},{"name":"admin","value":true}]}]}}"#,
+        );
+
+        assert_eq!(
+            data.subcommand_option_value("role").and_then(value_as_i64),
+            Some(456)
+        );
+        assert_eq!(
+            data.subcommand_option_value("admin")
+                .and_then(Value::as_bool),
+            Some(true)
         );
     }
 
