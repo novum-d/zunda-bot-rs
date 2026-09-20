@@ -25,7 +25,7 @@ Billing projectは未指定なら `SEVEN_DAYS_GCP_PROJECT`、1回のquery上限�
 
 初回 setup を行うユーザーに DB 管理者フラグがない場合は、対象 Guild と User を確認したうえで `guild_member.is_admin` を手動で `TRUE` にする。別 Guild の管理者フラグは bootstrap 権限として扱わない。設定未登録、無効設定、別 Channel、未登録 User／Role のコマンドは拒否する。
 
-ゲームサーバーは身内の 2〜4 人だけで利用する。`game_source_ranges` には参加者の固定 IPv4 を `/32` で指定し、ゲーム用ポートへの接続元を限定する。VPN は利用しない。自宅回線の IP が変わった場合は、Terraform の値を更新して再 apply する。SSH などの管理用ポートを全世界へ公開しない。
+ゲームサーバーは身内の 2〜4 人で利用するが、参加者のIP変更に対応するため `game_source_ranges = ["0.0.0.0/0"]` とし、ゲーム用 TCP 26900 と UDP 26900–26903 は全IPv4から接続可能にする。VPN は利用しない。SSHなどの管理用ポートはこのfirewall ruleで公開しない。
 
 Cloud Run は Discord interaction を受ける Webhook として運用し、`--min-instances=0` を必須とする。`start` と `stop` は Compute Engine API へ要求を送った時点で応答する。起動完了時のDuckDNS更新はVMのREADYフックが行い、READY確認、DuckDNS更新の再試行、停止完了と料金の確認は`/7dtd status`で行う。リクエスト後の処理継続を理由に最小インスタンス数を増やさない。
 

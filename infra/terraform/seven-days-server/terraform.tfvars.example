@@ -1,7 +1,8 @@
 project_id = "your-project"
 cloud_run_service_account_email = "zunda-bot@your-project.iam.gserviceaccount.com"
 billing_account_id = "000000-000000-000000"
-game_source_ranges = ["203.0.113.10/32"]
+# ゲームポートを全IPv4へ公開する。限定する場合は参加者の /32 に置き換える。
+game_source_ranges = ["0.0.0.0/0"]
 billing_export_dataset_id = "billing_export"
 # 空の場合はinstance_nameを使用する。異なるDuckDNS名を使う場合だけ指定する。
 duckdns_subdomain = ""

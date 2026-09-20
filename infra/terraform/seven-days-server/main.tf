@@ -75,8 +75,8 @@ resource "google_bigquery_dataset_iam_member" "cloud_run_billing_viewer" {
 }
 
 # 7DTD のゲーム通信だけを許可するファイアウォール。
-# source_ranges は参加者の固定 IP (/32) を指定することを想定する。
-# 0.0.0.0/0 を使う場合でも、ここで指定したゲームポート以外は公開しない。
+# source_ranges は全IPv4公開の 0.0.0.0/0 または個別の固定 IP (/32) を指定する。
+# 0.0.0.0/0 でも、ここで指定したゲームポート以外は公開しない。
 resource "google_compute_firewall" "game" {
   name          = "${var.instance_name}-game"
   network       = var.network
