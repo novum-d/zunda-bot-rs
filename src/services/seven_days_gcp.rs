@@ -56,9 +56,22 @@ struct AccessConfig {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct GuestAttributeResponse {
-    #[serde(rename = "variableValue")]
-    variable_value: Option<String>,
+    query_value: Option<GuestAttributeQueryValue>,
+}
+
+#[derive(Deserialize)]
+struct GuestAttributeQueryValue {
+    #[serde(default)]
+    items: Vec<GuestAttributeItem>,
+}
+
+#[derive(Deserialize)]
+struct GuestAttributeItem {
+    namespace: String,
+    key: String,
+    value: String,
 }
 
 impl ComputeClient {
@@ -126,13 +139,12 @@ impl ComputeClient {
         if response.status() == StatusCode::NOT_FOUND {
             return Ok(None);
         }
-        let value = response
+        let response = response
             .error_for_status()
             .context("Compute Engine guest attribute lookup failed")?
             .json::<GuestAttributeResponse>()
-            .await?
-            .variable_value;
-        value.as_deref().map(parse_guest_runtime_state).transpose()
+            .await?;
+        parse_guest_attribute_response(response)
     }
 
     pub async fn start(&self) -> Result<()> {
@@ -221,6 +233,18 @@ fn parse_guest_runtime_state(value: &str) -> Result<GuestRuntimeState> {
     })
 }
 
+fn parse_guest_attribute_response(
+    response: GuestAttributeResponse,
+) -> Result<Option<GuestRuntimeState>> {
+    response
+        .query_value
+        .into_iter()
+        .flat_map(|query| query.items)
+        .find(|item| item.namespace == "seven-days" && item.key == "runtime-state")
+        .map(|item| parse_guest_runtime_state(&item.value))
+        .transpose()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,6 +277,32 @@ mod tests {
             }
         );
         assert!(parse_guest_runtime_state("READY|boot-id").is_err());
+    }
+
+    #[test]
+    fn parses_guest_attribute_api_response() {
+        let response: GuestAttributeResponse = serde_json::from_str(
+            r#"{
+                "queryPath": "seven-days/runtime-state",
+                "queryValue": {
+                    "items": [{
+                        "namespace": "seven-days",
+                        "key": "runtime-state",
+                        "value": "READY|boot-id|2026-09-20T16:08:12Z"
+                    }]
+                }
+            }"#,
+        )
+        .expect("guest attribute response should deserialize");
+
+        assert_eq!(
+            parse_guest_attribute_response(response).expect("guest runtime state should parse"),
+            Some(GuestRuntimeState {
+                state: "READY".into(),
+                boot_id: "boot-id".into(),
+                started_at: "2026-09-20T16:08:12Z".into(),
+            })
+        );
     }
 
     #[test]

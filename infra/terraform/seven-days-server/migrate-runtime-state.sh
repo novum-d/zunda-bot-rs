@@ -23,6 +23,16 @@ curl -fsS -H 'Metadata-Flavor: Google' \
   | base64 -d >/usr/local/sbin/seven-days-safe-stop
 chmod 0755 /usr/local/sbin/seven-days-safe-stop
 
+# DuckDNS updaterと、Secret値を含まない参照設定を既存VMへ同期する。
+curl -fsS -H 'Metadata-Flavor: Google' \
+  http://metadata.google.internal/computeMetadata/v1/instance/attributes/seven-days-duckdns \
+  | base64 -d >/usr/local/sbin/seven-days-duckdns
+curl -fsS -H 'Metadata-Flavor: Google' \
+  http://metadata.google.internal/computeMetadata/v1/instance/attributes/seven-days-duckdns-config \
+  | base64 -d >/etc/seven-days-duckdns.json
+chmod 0700 /usr/local/sbin/seven-days-duckdns
+chmod 0600 /etc/seven-days-duckdns.json
+
 cat >/usr/local/sbin/seven-days-state <<'STATE'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -43,6 +53,9 @@ cat >/usr/local/sbin/seven-days-ready <<'READY'
 set -euo pipefail
 for _ in $(seq 1 120); do
   if ss -H -lnt 'sport = :26900' | grep -q .; then
+    if ! /usr/local/sbin/seven-days-duckdns; then
+      printf 'DuckDNSの自動更新に失敗しました。/7dtd statusで再試行してください\n' >&2
+    fi
     /usr/local/sbin/seven-days-state READY
     exit 0
   fi

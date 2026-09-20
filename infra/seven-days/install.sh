@@ -83,8 +83,12 @@ metadata_file() { curl -fsS -H 'Metadata-Flavor: Google' "$METADATA/$1" | base64
 metadata_file seven-days-safe-stop /usr/local/sbin/seven-days-safe-stop
 metadata_file seven-days-backup /usr/local/sbin/seven-days-backup
 metadata_file seven-days-backup-bucket /etc/seven-days-backup-bucket
+metadata_file seven-days-duckdns /usr/local/sbin/seven-days-duckdns
+metadata_file seven-days-duckdns-config /etc/seven-days-duckdns.json
 chmod 0755 /usr/local/sbin/seven-days-safe-stop /usr/local/sbin/seven-days-backup
+chmod 0700 /usr/local/sbin/seven-days-duckdns
 chmod 0644 /etc/seven-days-backup-bucket
+chmod 0600 /etc/seven-days-duckdns.json
 
 # 初回だけメタデータにある設定テンプレートを永続ディスクへ配置する。
 ## 運用中に変更される設定ファイルなので、初回のみ配置
@@ -172,6 +176,9 @@ cat >/usr/local/sbin/seven-days-ready <<'READY'
 set -euo pipefail
 for _ in $(seq 1 120); do
   if ss -H -lnt 'sport = :26900' | grep -q .; then
+    if ! /usr/local/sbin/seven-days-duckdns; then
+      printf 'DuckDNSの自動更新に失敗しました。/7dtd statusで再試行してください\n' >&2
+    fi
     /usr/local/sbin/seven-days-state READY
     exit 0
   fi

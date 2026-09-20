@@ -62,16 +62,17 @@ variable "network" {
   default = "default"
 }
 
-# ゲームポートへの接続を許可する参加者の送信元 CIDR。
-# 身内向け運用では固定 IP を /32 で指定し、全世界公開を避ける。
+# ゲームポートへの接続を許可する送信元 CIDR。
+# 全IPv4からの接続を許可する場合は 0.0.0.0/0、限定する場合は /32 を指定する。
 variable "game_source_ranges" {
   type = list(string)
 
   validation {
     condition = length(var.game_source_ranges) > 0 && alltrue([
-      for cidr in var.game_source_ranges : can(cidrnetmask(cidr)) && endswith(cidr, "/32")
+      for cidr in var.game_source_ranges :
+      cidr == "0.0.0.0/0" || (can(cidrnetmask(cidr)) && endswith(cidr, "/32"))
     ])
-    error_message = "game_source_ranges には接続を許可するIPv4アドレスを /32 形式で1件以上指定してください。"
+    error_message = "game_source_rangesにはIPv4アドレスを/32形式、または全IPv4を許可する0.0.0.0/0で指定してください。"
   }
 }
 
@@ -91,4 +92,15 @@ variable "monthly_budget_jpy" {
 variable "duckdns_secret_id" {
   type    = string
   default = "SEVEN_DAYS_DUCKDNS_TOKEN"
+}
+
+# DuckDNSのサブドメイン。空の場合はVM名を使用する。
+variable "duckdns_subdomain" {
+  type    = string
+  default = ""
+
+  validation {
+    condition     = var.duckdns_subdomain == "" || can(regex("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$", var.duckdns_subdomain))
+    error_message = "duckdns_subdomain は小文字英数字とハイフンだけで指定してください。"
+  }
 }
