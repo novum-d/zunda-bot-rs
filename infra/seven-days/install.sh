@@ -149,6 +149,39 @@ if changed:
     os.replace(temporary_path, config_path)
 PY
 
+# ゲームサーバーの状態を Compute Engine Guest Attributes へ通知する。
+# 起動時刻を含め、Bot が前回起動時の READY を誤認しないようにする。
+cat >/usr/local/sbin/seven-days-state <<'STATE'
+#!/usr/bin/env bash
+set -euo pipefail
+STATE=${1:?state is required}
+STARTED_AT_FILE=/run/seven-days-started-at
+if [ "$STATE" = STARTING ]; then date -u +%Y-%m-%dT%H:%M:%SZ >"$STARTED_AT_FILE"; fi
+STARTED_AT=$(<"$STARTED_AT_FILE")
+BOOT_ID=$(</proc/sys/kernel/random/boot_id)
+curl -fsS -X PUT \
+  -H 'Metadata-Flavor: Google' \
+  --data "$STATE|$BOOT_ID|$STARTED_AT" \
+  http://metadata.google.internal/computeMetadata/v1/instance/guest-attributes/seven-days/runtime-state \
+  >/dev/null
+STATE
+
+# systemd の ExecStartPost から、TCP 26900 の待受を最大10分確認する。
+cat >/usr/local/sbin/seven-days-ready <<'READY'
+#!/usr/bin/env bash
+set -euo pipefail
+for _ in $(seq 1 120); do
+  if ss -H -lnt 'sport = :26900' | grep -q .; then
+    /usr/local/sbin/seven-days-state READY
+    exit 0
+  fi
+  sleep 5
+done
+/usr/local/sbin/seven-days-state FAILED
+exit 1
+READY
+chmod 0755 /usr/local/sbin/seven-days-state /usr/local/sbin/seven-days-ready
+
 # systemd でサーバーを管理し、停止時には安全停止スクリプトを呼び出す。
 cat >/etc/systemd/system/seven-days.service <<'UNIT'
 [Unit]
@@ -161,9 +194,13 @@ Type=simple
 User=seven-days
 WorkingDirectory=/opt/seven-days
 ExecCondition=/bin/sh -c '! grep -q CHANGE_BEFORE_START /srv/seven-days-data/serverconfig.xml'
+ExecStartPre=+/usr/local/sbin/seven-days-state STARTING
 ExecStart=/opt/seven-days/startserver.sh -configfile=/srv/seven-days-data/serverconfig.xml -UserDataFolder=/srv/seven-days-data
+ExecStartPost=+/usr/local/sbin/seven-days-ready
 ExecStop=+/usr/local/sbin/seven-days-safe-stop
-TimeoutStopSec=180
+ExecStopPost=+/usr/local/sbin/seven-days-state STOPPED
+TimeoutStartSec=620
+TimeoutStopSec=110
 Restart=on-failure
 
 [Install]
@@ -180,17 +217,8 @@ if grep -q 'CHANGE_BEFORE_START' "$MOUNT/serverconfig.xml"; then
 else
   systemctl enable seven-days.service
   systemctl start seven-days.service
-  # systemd の active に加え、外部接続に使う TCP 26900 の待受開始まで最大10分待つ。
-  SERVER_READY=false
-  for _ in $(seq 1 120); do
-    if ss -H -lnt 'sport = :26900' | grep -q .; then
-      SERVER_READY=true
-      break
-    fi
-    if ! systemctl is-active --quiet seven-days.service; then break; fi
-    sleep 5
-  done
-  if [ "$SERVER_READY" != true ]; then
+  # ExecStartPost が TCP 26900 の待受と READY 通知を完了したことを確認する。
+  if ! systemctl is-active --quiet seven-days.service; then
     printf '7 Days to Die サーバーの TCP 26900 待受を確認できないため、完了マーカーを作成しません\n' >&2
     exit 1
   fi
