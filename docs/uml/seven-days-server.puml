@@ -6,8 +6,9 @@ database PostgreSQL as DB
 participant "Compute Engine API" as Compute
 participant DuckDNS
 participant "7DTD VM\nsystemd" as VM
+participant "Secret Manager" as Secrets
 database "Persistent Disk" as Disk
-cloud "Cloud Storage\nbackup bucket" as Storage
+participant "Cloud Storage\nbackup bucket" as Storage
 database "BigQuery\nBilling export" as Billing
 User -> Discord: /7dtd setup|allow-*|remove-*|start|status|stop
 Discord -> Bot: signed interaction
@@ -45,6 +46,8 @@ else start / status / stop
   end
 end
 VM -> VM: TCP 26900 readiness
+VM -> Secrets: read the DuckDNS token
+VM -> DuckDNS: update temporary IPv4
 VM -> Compute: Guest Attributes READY
 VM -> Disk: Saves / GeneratedWorlds / Mods
 VM -> Disk: saveworld before shutdown

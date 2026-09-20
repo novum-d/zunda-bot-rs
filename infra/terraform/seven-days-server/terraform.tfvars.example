@@ -3,3 +3,5 @@ cloud_run_service_account_email = "zunda-bot@your-project.iam.gserviceaccount.co
 billing_account_id = "000000-000000-000000"
 game_source_ranges = ["203.0.113.10/32"]
 billing_export_dataset_id = "billing_export"
+# 空の場合はinstance_nameを使用する。異なるDuckDNS名を使う場合だけ指定する。
+duckdns_subdomain = ""

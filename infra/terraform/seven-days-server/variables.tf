@@ -92,3 +92,14 @@ variable "duckdns_secret_id" {
   type    = string
   default = "SEVEN_DAYS_DUCKDNS_TOKEN"
 }
+
+# DuckDNSのサブドメイン。空の場合はVM名を使用する。
+variable "duckdns_subdomain" {
+  type    = string
+  default = ""
+
+  validation {
+    condition     = var.duckdns_subdomain == "" || can(regex("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$", var.duckdns_subdomain))
+    error_message = "duckdns_subdomain は小文字英数字とハイフンだけで指定してください。"
+  }
+}

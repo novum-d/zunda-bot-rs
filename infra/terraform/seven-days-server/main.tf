@@ -10,6 +10,10 @@ resource "google_compute_disk" "data" {
   }
 }
 
+locals {
+  duckdns_subdomain = var.duckdns_subdomain != "" ? var.duckdns_subdomain : var.instance_name
+}
+
 # ゲームのバックアップは VM のディスクとは別の GCS バケットへ保存する。
 # ライフサイクルで古いバックアップを削除し、データディスクの容量増加を防ぐ。
 resource "google_storage_bucket" "backup" {
@@ -95,6 +99,11 @@ resource "google_compute_instance" "server" {
   zone         = var.zone
   machine_type = var.machine_type
   tags         = [var.instance_name]
+  # startup scriptは新規VMの初期構築専用とし、既存VMは明示的な移行手順で更新する。
+  # 内容変更によるVM置換を防ぎ、分離していないboot diskと稼働環境を保持する。
+  lifecycle {
+    ignore_changes = [metadata_startup_script]
+  }
   # マシンタイプなどの変更時に Terraform が VM を停止して更新できる。
   # apply 前にゲームを正常停止し、停止時間を把握しておく。
   allow_stopping_for_update = true
@@ -128,6 +137,12 @@ resource "google_compute_instance" "server" {
     seven-days-backup        = base64encode(file("${path.module}/../../seven-days/backup.sh"))
     seven-days-backup-bucket = base64encode(google_storage_bucket.backup.name)
     seven-days-config        = base64encode(file("${path.module}/../../seven-days/serverconfig.template.xml"))
+    seven-days-duckdns       = base64encode(file("${path.module}/../../seven-days/duckdns.py"))
+    seven-days-duckdns-config = base64encode(jsonencode({
+      project_id = var.project_id
+      secret_id  = var.duckdns_secret_id
+      subdomain  = local.duckdns_subdomain
+    }))
   }
   # VM 初回起動時に SteamCMD、7DTD、systemd などをセットアップする。
   metadata_startup_script = file("${path.module}/../../seven-days/install.sh")
@@ -165,6 +180,13 @@ resource "google_secret_manager_secret_iam_member" "duckdns" {
   secret_id = data.google_secret_manager_secret.duckdns.id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${var.cloud_run_service_account_email}"
+}
+
+# READYフックが現在の外部IPv4をDuckDNSへ同期できるよう、対象Secretだけの読み取りをVMへ許可する。
+resource "google_secret_manager_secret_iam_member" "duckdns_vm" {
+  secret_id = data.google_secret_manager_secret.duckdns.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${data.google_project.current.number}-compute@developer.gserviceaccount.com"
 }
 
 # 月額予算の通知設定。閾値を超えても自動的に課金や VM を停止する機能ではない。

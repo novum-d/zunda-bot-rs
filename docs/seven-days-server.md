@@ -8,7 +8,7 @@
 2. Terraform README に従い versioning 有効な state bucket を bootstrap し、必要なら `backup_bucket_name` を指定して apply する。バックアップ用バケットは Terraform が作成する。
    既存の 80 GiB データディスクは縮小できないため、既存環境では移行完了まで `data_disk_size_gb=80` を明示する。新しい 10 GiB ディスクへのコピーと短時間の起動確認を終えてから、ディスク参照を切り替える。継続運用へ移る場合は20GiB以上へ拡張する。
 3. 初回起動時に startup script が `/srv/seven-days-data/serverconfig.xml` の `CHANGE_BEFORE_START` をランダム値へ置換する。ゲーム用と Telnet 用の値は、それぞれ root のみ読める `/srv/seven-days-data/server-password` と `/srv/seven-days-data/telnet-password` にも保存する。値を shell history やログへ出さない。
-4. startup script がゲームサーバーを起動し、TCP 26900 の待受を確認してから Guest Attributes に起動時刻付きの READY を通知し、プロビジョニング完了とする。`serverconfig.xml` にプレースホルダーが残る場合は systemd の起動条件でも拒否する。起動後に service の状態と journal を確認し、以後は VM 起動時に自動起動する。
+4. startup script がゲームサーバーを起動し、TCP 26900 の待受を確認してから現在の外部IPv4をDuckDNSへ同期し、Guest Attributes に起動時刻付きの READY を通知してプロビジョニング完了とする。VMのサービスアカウントには対象DuckDNS SecretだけのAccessorを付与し、tokenはVMメタデータ、ファイル、ログ、プロセス引数へ保存しない。DuckDNS更新に失敗してもゲームサーバーはREADYとし、`/7dtd status`で再試行する。`serverconfig.xml` にプレースホルダーが残る場合は systemd の起動条件でも拒否する。起動後にservice、journal、DNSを確認し、以後はVM起動時に自動起動する。
 5. Terraform apply後、Cloud Billing ConsoleでStandard usage cost exportを有効化し、出力された `billing_export_dataset` を保存先に指定する。作成される `gcp_billing_export_v1_...` table名を確認する。exportには反映遅延があり、初回backfill完了まで数日かかる場合がある。
 6. Cloud Run に下記環境変数を設定し、DuckDNS token だけを Secret Manager から注入する。Discord の Guild、Channel、User、Role ID は環境変数へ入れず、起動後に DB へ登録する。
 
@@ -27,13 +27,13 @@ Billing projectは未指定なら `SEVEN_DAYS_GCP_PROJECT`、1回のquery上限�
 
 ゲームサーバーは身内の 2〜4 人だけで利用する。`game_source_ranges` には参加者の固定 IPv4 を `/32` で指定し、ゲーム用ポートへの接続元を限定する。VPN は利用しない。自宅回線の IP が変わった場合は、Terraform の値を更新して再 apply する。SSH などの管理用ポートを全世界へ公開しない。
 
-Cloud Run は Discord interaction を受ける Webhook として運用し、`--min-instances=0` を必須とする。`start` と `stop` は Compute Engine API へ要求を送った時点で応答し、起動時の READY 確認、DuckDNS 更新、停止完了と料金の確認は `/7dtd status` の実行時に行う。リクエスト後の処理継続を理由に最小インスタンス数を増やさない。
+Cloud Run は Discord interaction を受ける Webhook として運用し、`--min-instances=0` を必須とする。`start` と `stop` は Compute Engine API へ要求を送った時点で応答する。起動完了時のDuckDNS更新はVMのREADYフックが行い、READY確認、DuckDNS更新の再試行、停止完了と料金の確認は`/7dtd status`で行う。リクエスト後の処理継続を理由に最小インスタンス数を増やさない。
 
 ### 既存VMへのREADY通知移行
 
-Guest Attributes導入前に構築済みのVMは、プロビジョニング完了マーカーにより通常のstartup scriptを省略するため、READY通知用ファイルを一度だけ移行する。移行スクリプトはTerraformで更新された安全停止処理もメタデータから同期する。先にCloud Run用custom roleへ`compute.instances.getGuestAttributes`を追加し、VMメタデータへ`enable-guest-attributes=TRUE`を設定する。
+Guest AttributesまたはREADY時のDuckDNS更新導入前に構築済みのVMは、プロビジョニング完了マーカーにより通常のstartup scriptを省略するため、runtime helperを一度だけ移行する。移行スクリプトはTerraformで更新された安全停止処理、DuckDNS updater、Secret値を含まない参照設定もメタデータから同期する。先にCloud Run用custom roleへ`compute.instances.getGuestAttributes`を追加し、VMメタデータへ`enable-guest-attributes=TRUE`を設定する。VMサービスアカウントには対象DuckDNS SecretのAccessorだけを付与する。
 
-`google_compute_instance.server`のTerraform planにVM置換が含まれる場合はapplyしない。既存データディスクを保持したまま移行するため、`migrate-runtime-state.sh`を一時的なstartup scriptとして設定し、通常停止・起動で配置した後、元の`install.sh`へ戻す。移行用startup scriptは稼働中のunitをreloadしないため、新しいunitを読み込ませる目的でもう一度通常停止・起動する。
+`google_compute_instance.server`のTerraform planにVM置換が含まれる場合はapplyしない。startup scriptは新規VMの初期構築専用としてTerraformの差分検出対象外にしているため、既存VMの更新とstartup scriptの復元はこの手順で明示的に行う。既存データディスクを保持したまま移行するため、`migrate-runtime-state.sh`を一時的なstartup scriptとして設定し、通常停止・起動で配置した後、必ず元の`install.sh`へ戻す。移行用startup scriptは稼働中のunitをreloadしないため、新しいunitを読み込ませる目的でもう一度通常停止・起動する。
 
 ```sh
 SEVEN_DAYS_PROJECT=project-d7a8d346-0d55-468c-ace
@@ -72,7 +72,7 @@ gcloud compute instances get-guest-attributes "$SEVEN_DAYS_INSTANCE" \
   --query-path=seven-days/runtime-state
 ```
 
-最後に`/7dtd status`でREADY、現在の外部IPv4、DuckDNSの同期を確認する。移行中にVMの置換、ディスクの削除、強制停止は行わない。
+最後に`/7dtd status`でREADYと現在の外部IPv4を確認し、`dig +short <subdomain>.duckdns.org`が同じIPv4を返すことを確認する。DuckDNS updaterの成功／失敗はtokenを含まないため、`journalctl -u seven-days`でも確認できる。移行中にVMの置換、ディスクの削除、強制停止は行わない。
 
 ### Persistent Diskの容量確認
 
@@ -196,8 +196,8 @@ gcloud compute ssh root@"$SEVEN_DAYS_INSTANCE" \
 - `/7dtd setup channel:<channel>`: Guild 単位の DB 管理者または既存の7DTD管理者限定。操作 Channel を登録し、実行者を7DTD管理者にする。
 - `/7dtd allow-user user:<user> admin:<bool>` / `/7dtd allow-role role:<role> admin:<bool>`: 7DTD Operator を追加・更新する。
 - `/7dtd remove-user user:<user>` / `/7dtd remove-role role:<role>`: 7DTD Operator を削除する。
-- `/7dtd start`: `admin:true` の Operator 限定。登録 Channel で実行し、TERMINATED の場合だけ起動を要求してREADYを待たずに応答する。以後は `/7dtd status` で確認する。
-- `/7dtd status`: 登録済み Operator が登録 Channel で実行できる。VM、現在の起動に対応するゲームREADY、接続先、外部 IPv4、稼働時間を表示する。READY のときは外部 IPv4 を DuckDNS に反映する。停止済みの場合は Billing exportに反映済みの当月・当年net cost、通貨、集計反映時点も表示する。古い起動のREADYは採用しない。
+- `/7dtd start`: `admin:true` の Operator 限定。登録 Channel で実行し、TERMINATED の場合だけ起動を要求してREADYを待たずに応答する。ゲームがREADYになるとVMが現在の外部IPv4をDuckDNSへ同期する。以後は `/7dtd status` で確認する。
+- `/7dtd status`: 登録済み Operator が登録 Channel で実行できる。VM、現在の起動に対応するゲームREADY、接続先、外部 IPv4、稼働時間を表示する。READY のときは外部 IPv4 を DuckDNS に再反映し、起動時更新の失敗から復旧する。停止済みの場合は Billing exportに反映済みの当月・当年net cost、通貨、集計反映時点も表示する。古い起動のREADYは採用しない。
 - `/7dtd stop`: `admin:true` の Operator 限定。登録 Channel で Compute Engine の通常停止を要求し、完了を待たずに応答する。systemd `ExecStop` がゲーム内通知、`saveworld`、`shutdown`、プロセス終了確認を通常停止猶予内に行う。以後は `/7dtd status` で停止完了を確認する。
 - `/7dtd start` と `/7dtd stop` はPostgreSQLのトランザクションロックを取得してからVM操作を行う。別の開始・停止処理が実行中ならVM APIを呼ばず使用中メッセージを返す。Cloud Runが複数インスタンスでも同じDBロックを共有する。
 - READY にならない場合は serial/startup logs、`systemctl status seven-days`、`journalctl -u seven-days`、firewall、`serverconfig.xml` を確認する。
