@@ -1,10 +1,11 @@
 use anyhow::{Context as _, Result};
 use reqwest::{Client, StatusCode};
-use serde::Deserialize;
-use std::time::Duration;
+use serde::{Deserialize, Serialize};
+use std::{net::Ipv4Addr, time::Duration};
 
 const METADATA_TOKEN_URL: &str =
     "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
+const MANAGED_FIREWALL_DESCRIPTION: &str = "Managed by zunda-bot-rs /7dtd ip";
 
 #[derive(Clone)]
 pub struct ComputeClient {
@@ -60,6 +61,40 @@ struct GuestAttributeResponse {
     variable_value: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct FirewallListResponse {
+    #[serde(default)]
+    items: Vec<FirewallResponse>,
+}
+
+#[derive(Deserialize)]
+struct FirewallResponse {
+    name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default, rename = "sourceRanges")]
+    source_ranges: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct CreateFirewallRequest {
+    name: String,
+    description: &'static str,
+    network: String,
+    #[serde(rename = "sourceRanges")]
+    source_ranges: Vec<String>,
+    #[serde(rename = "targetTags")]
+    target_tags: Vec<String>,
+    allowed: Vec<FirewallAllowed>,
+}
+
+#[derive(Serialize)]
+struct FirewallAllowed {
+    #[serde(rename = "IPProtocol")]
+    ip_protocol: &'static str,
+    ports: Vec<&'static str>,
+}
+
 impl ComputeClient {
     pub fn new(project: String, zone: String, instance: String) -> Result<Self> {
         let http = Client::builder().timeout(Duration::from_secs(15)).build()?;
@@ -88,6 +123,13 @@ impl ComputeClient {
         format!(
             "https://compute.googleapis.com/compute/v1/projects/{}/zones/{}/instances/{}",
             self.project, self.zone, self.instance
+        )
+    }
+
+    fn firewalls_url(&self) -> String {
+        format!(
+            "https://compute.googleapis.com/compute/v1/projects/{}/global/firewalls",
+            self.project
         )
     }
 
@@ -153,6 +195,131 @@ impl ComputeClient {
         }
         Ok(())
     }
+
+    pub async fn allowed_ips(&self) -> Result<Vec<Ipv4Addr>> {
+        let response = self
+            .http
+            .get(self.firewalls_url())
+            .bearer_auth(self.token().await?)
+            .send()
+            .await?
+            .error_for_status()
+            .context("Compute Engine firewall list failed")?
+            .json::<FirewallListResponse>()
+            .await?;
+        let prefix = self.managed_firewall_prefix();
+        let mut ips = response
+            .items
+            .into_iter()
+            .filter(|rule| {
+                rule.name.starts_with(&prefix) && rule.description == MANAGED_FIREWALL_DESCRIPTION
+            })
+            .flat_map(|rule| rule.source_ranges)
+            .filter_map(|range| range.strip_suffix("/32").map(str::to_owned))
+            .filter_map(|address| address.parse().ok())
+            .collect::<Vec<Ipv4Addr>>();
+        ips.sort_unstable();
+        ips.dedup();
+        Ok(ips)
+    }
+
+    pub async fn add_allowed_ip(&self, ip: Ipv4Addr, network: &str) -> Result<bool> {
+        let request = CreateFirewallRequest {
+            name: self.managed_firewall_name(ip),
+            description: MANAGED_FIREWALL_DESCRIPTION,
+            network: format!("global/networks/{network}"),
+            source_ranges: vec![format!("{ip}/32")],
+            target_tags: vec![self.instance.clone()],
+            allowed: vec![
+                FirewallAllowed {
+                    ip_protocol: "tcp",
+                    ports: vec!["26900"],
+                },
+                FirewallAllowed {
+                    ip_protocol: "udp",
+                    ports: vec!["26900-26903"],
+                },
+            ],
+        };
+        let response = self
+            .http
+            .post(self.firewalls_url())
+            .bearer_auth(self.token().await?)
+            .json(&request)
+            .send()
+            .await?;
+        if response.status() == StatusCode::CONFLICT {
+            anyhow::ensure!(
+                self.managed_firewall_matches(ip).await?,
+                "firewall name is already used by an unmanaged rule"
+            );
+            return Ok(false);
+        }
+        response
+            .error_for_status()
+            .context("Compute Engine firewall creation failed")?;
+        Ok(true)
+    }
+
+    pub async fn remove_allowed_ip(&self, ip: Ipv4Addr) -> Result<bool> {
+        let name = self.managed_firewall_name(ip);
+        let Some(rule) = self.firewall(&name).await? else {
+            return Ok(false);
+        };
+        anyhow::ensure!(
+            is_managed_firewall_for_ip(&rule, ip),
+            "refusing to delete an unmanaged firewall rule"
+        );
+        let response = self
+            .http
+            .delete(format!("{}/{name}", self.firewalls_url()))
+            .bearer_auth(self.token().await?)
+            .send()
+            .await?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(false);
+        }
+        response
+            .error_for_status()
+            .context("Compute Engine firewall deletion failed")?;
+        Ok(true)
+    }
+
+    async fn managed_firewall_matches(&self, ip: Ipv4Addr) -> Result<bool> {
+        Ok(self
+            .firewall(&self.managed_firewall_name(ip))
+            .await?
+            .as_ref()
+            .is_some_and(|rule| is_managed_firewall_for_ip(rule, ip)))
+    }
+
+    async fn firewall(&self, name: &str) -> Result<Option<FirewallResponse>> {
+        let response = self
+            .http
+            .get(format!("{}/{name}", self.firewalls_url()))
+            .bearer_auth(self.token().await?)
+            .send()
+            .await?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        Ok(Some(
+            response
+                .error_for_status()
+                .context("Compute Engine firewall lookup failed")?
+                .json::<FirewallResponse>()
+                .await?,
+        ))
+    }
+
+    fn managed_firewall_prefix(&self) -> String {
+        let instance = self.instance.chars().take(47).collect::<String>();
+        format!("{instance}-player-")
+    }
+
+    fn managed_firewall_name(&self, ip: Ipv4Addr) -> String {
+        format!("{}{:08x}", self.managed_firewall_prefix(), u32::from(ip))
+    }
 }
 
 #[derive(Clone)]
@@ -215,6 +382,10 @@ fn parse_guest_runtime_state(value: &str) -> Result<GuestRuntimeState> {
     })
 }
 
+fn is_managed_firewall_for_ip(rule: &FirewallResponse, ip: Ipv4Addr) -> bool {
+    rule.description == MANAGED_FIREWALL_DESCRIPTION && rule.source_ranges == [format!("{ip}/32")]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,5 +418,32 @@ mod tests {
             }
         );
         assert!(parse_guest_runtime_state("READY|boot-id").is_err());
+    }
+
+    #[test]
+    fn creates_stable_managed_firewall_name() {
+        let client = ComputeClient::new("project".into(), "zone".into(), "zunda-7dtd".into())
+            .expect("client should build");
+        assert_eq!(
+            client.managed_firewall_name(Ipv4Addr::new(1, 2, 3, 4)),
+            "zunda-7dtd-player-01020304"
+        );
+    }
+
+    #[test]
+    fn only_matching_firewall_is_managed() {
+        let ip = Ipv4Addr::new(8, 8, 8, 8);
+        let managed = FirewallResponse {
+            name: "zunda-7dtd-player-08080808".into(),
+            description: MANAGED_FIREWALL_DESCRIPTION.into(),
+            source_ranges: vec!["8.8.8.8/32".into()],
+        };
+        assert!(is_managed_firewall_for_ip(&managed, ip));
+
+        let unmanaged = FirewallResponse {
+            description: "created manually".into(),
+            ..managed
+        };
+        assert!(!is_managed_firewall_for_ip(&unmanaged, ip));
     }
 }
