@@ -8,6 +8,7 @@ participant DuckDNS
 participant "7DTD VM\nsystemd" as VM
 database "Persistent Disk" as Disk
 cloud "Cloud Storage\nbackup bucket" as Storage
+database "BigQuery\nBilling export" as Billing
 User -> Discord: /7dtd setup|allow-*|remove-*|start|status|stop
 Discord -> Bot: signed interaction
 alt setup / Operator management
@@ -16,13 +17,36 @@ alt setup / Operator management
 else start / status / stop
   Bot -> DB: load Guild/Channel/User/Role authorization
   Bot -> Bot: verify channel and permission
+  alt start / stop
+    Bot -> DB: pg_try_advisory_xact_lock
+    alt another operation is running
+      DB --> Bot: false
+      Bot --> Discord: 使用中メッセージ（VM APIを呼ばない）
+    else lock acquired
+      alt start
+        Bot -> Compute: get/start
+        Compute -> VM: power on
+        Bot --> Discord: 起動要求受付（READYはstatusで確認）
+      else stop
+        Bot -> Compute: get/stop
+        Compute -> VM: normal stop
+        Bot --> Discord: 停止要求受付（完了はstatusで確認）
+      end
+    end
+  else status
+    Bot -> Compute: VM state / current boot READY lookup
+    opt READY
+      Bot -> DuckDNS: update temporary IPv4
+    end
+    opt stopped
+      Bot -> Billing: monthly/yearly net cost
+    end
+    Bot --> Discord: current status
+  end
 end
-Bot -> Compute: get/start/stop
-Compute -> VM: power lifecycle
-Bot -> DuckDNS: update temporary IPv4
-Bot -> VM: TCP 26900 readiness
+VM -> VM: TCP 26900 readiness
+VM -> Compute: Guest Attributes READY
 VM -> Disk: Saves / GeneratedWorlds / Mods
 VM -> Disk: saveworld before shutdown
 VM -> Storage: compressed backup upload
-Bot --> Discord: ephemeral followup
 @enduml

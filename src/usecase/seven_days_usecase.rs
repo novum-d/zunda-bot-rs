@@ -1,16 +1,14 @@
 use crate::data::seven_days_repository::SevenDaysRepository;
 use crate::models::seven_days::{SevenDaysAuthorization, SevenDaysOperatorKind};
-use crate::services::seven_days_gcp::{ComputeClient, DuckDnsClient, InstanceStatus};
+use crate::services::seven_days_billing::{BillingClient, CostSummary};
+use crate::services::seven_days_gcp::{
+    ComputeClient, DuckDnsClient, GuestRuntimeState, InstanceStatus,
+};
 use crate::services::seven_days_operation_lock::SevenDaysOperationLock;
 use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
-use std::{env, sync::Arc, time::Duration};
-use tokio::net::TcpStream;
-use tokio::time::Instant;
-
-const START_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-const POLL_INTERVAL: Duration = Duration::from_secs(5);
+use std::{env, sync::Arc};
 
 #[derive(Clone)]
 pub struct SevenDaysUsecase {
@@ -18,6 +16,7 @@ pub struct SevenDaysUsecase {
     duckdns: DuckDnsClient,
     domain: String,
     port: u16,
+    billing: Option<BillingClient>,
     repository: SevenDaysRepository,
     operation_pool: Arc<PgPool>,
 }
@@ -38,6 +37,19 @@ impl SevenDaysUsecase {
             env::var(name).with_context(|| format!("'{name}' is required when 7DTD is enabled"))
         };
         let (duckdns_subdomain, domain) = duckdns_names(&required("SEVEN_DAYS_DUCKDNS_DOMAIN")?)?;
+        let billing = optional_env("SEVEN_DAYS_BILLING_DATASET")
+            .map(|dataset| {
+                BillingClient::new(
+                    optional_env("SEVEN_DAYS_BILLING_PROJECT").unwrap_or_else(|| project.clone()),
+                    dataset,
+                    required("SEVEN_DAYS_BILLING_TABLE")?,
+                    project.clone(),
+                    optional_env("SEVEN_DAYS_BILLING_MAX_BYTES")
+                        .unwrap_or_else(|| "100000000".into())
+                        .parse()?,
+                )
+            })
+            .transpose()?;
         let repository = SevenDaysRepository::new(operation_pool.clone());
         Ok(Some(Self {
             compute: ComputeClient::new(
@@ -50,6 +62,7 @@ impl SevenDaysUsecase {
             port: optional_env("SEVEN_DAYS_PORT")
                 .unwrap_or_else(|| "26900".into())
                 .parse()?,
+            billing,
             repository,
             operation_pool,
         }))
@@ -128,31 +141,23 @@ impl SevenDaysUsecase {
     }
 
     pub async fn start(&self) -> Result<String> {
-        let deadline = Instant::now() + START_TIMEOUT;
-        let mut status = self.compute.status().await?;
+        let status = self.compute.status().await?;
         if status.state == "TERMINATED" {
             self.compute.start().await?;
+            return Ok(
+                "VM の起動を要求したのだ。`/7dtd status` で READY と接続先を確認してほしいのだ。"
+                    .into(),
+            );
         } else if status.state != "RUNNING" {
             return Ok(format!(
                 "VM は現在 {} なのだ。起動処理の完了を待ってほしいのだ。",
                 status.state
             ));
         }
-        while Instant::now() < deadline {
-            status = self.compute.status().await?;
-            if status.state == "RUNNING" && status.external_ip.is_some() {
-                break;
-            }
-            tokio::time::sleep(POLL_INTERVAL).await;
-        }
-        let ip = status
-            .external_ip
-            .context("VM started but external IPv4 was unavailable")?;
-        self.duckdns.update(&ip).await?;
-        Ok(format!(
-            "VM を起動して DuckDNS を更新したのだ！ゲームの起動完了は参加端末から確認してほしいのだ。 `{}` / `{}:{}`",
-            self.domain, ip, self.port
-        ))
+        Ok(
+            "VM はすでに起動しているのだ。`/7dtd status` で READY と接続先を確認してほしいのだ。"
+                .into(),
+        )
     }
 
     pub async fn status(&self) -> Result<String> {
@@ -160,40 +165,70 @@ impl SevenDaysUsecase {
         let uptime = uptime_minutes(&status, Utc::now())
             .map(|minutes| format!("{minutes}分"))
             .unwrap_or_else(|| "なし".into());
-        let ip = status.external_ip.unwrap_or_else(|| "なし".into());
-        let game = if status.state != "RUNNING" {
-            "NOT READY"
-        } else if tcp_ready(&ip, self.port).await {
-            "READY"
-        } else {
-            "確認不可（接続元制限のため参加端末で確認）"
-        };
-        Ok(format!(
+        let ready = status.state == "RUNNING" && self.runtime_ready(&status).await?;
+        if ready {
+            self.duckdns
+                .update(
+                    status
+                        .external_ip
+                        .as_deref()
+                        .context("READY VM did not have an external IPv4")?,
+                )
+                .await?;
+        }
+        let ip = status.external_ip.clone().unwrap_or_else(|| "なし".into());
+        let message = format!(
             "VM: {}\nゲーム: {}\n接続先: `{}:{}`\n外部 IPv4: `{}`\n稼働時間: {}",
-            status.state, game, self.domain, self.port, ip, uptime
-        ))
+            status.state,
+            if ready { "READY" } else { "NOT READY" },
+            self.domain,
+            self.port,
+            ip,
+            uptime
+        );
+        if status.state == "TERMINATED" {
+            Ok(self.with_costs(&message).await)
+        } else {
+            Ok(message)
+        }
     }
 
     pub async fn stop(&self) -> Result<String> {
         let InstanceStatus { state, .. } = self.compute.status().await?;
         if state == "TERMINATED" {
-            return Ok("VM はすでに停止しているのだ。".into());
+            return Ok(self.with_costs("VM はすでに停止しているのだ。").await);
         }
         anyhow::ensure!(
             state == "RUNNING",
             "VM is {state}; refusing a duplicate stop request"
         );
         self.compute.stop().await?;
-        Ok("安全停止を要求したのだ。systemd がワールド保存と正常終了を行ってから VM を停止するのだ。".into())
+        Ok("VM の安全停止を要求したのだ。`/7dtd status` で停止完了を確認してほしいのだ。".into())
+    }
+
+    async fn runtime_ready(&self, status: &InstanceStatus) -> Result<bool> {
+        let Some(runtime) = self.compute.guest_runtime_state().await? else {
+            return Ok(false);
+        };
+        Ok(instance_is_ready(status, &runtime))
+    }
+
+    async fn with_costs(&self, message: &str) -> String {
+        let Some(billing) = &self.billing else {
+            return format!("{message}\n料金情報は設定されていないのだ。");
+        };
+        match billing.costs().await {
+            Ok(costs) => format!("{message}\n{}", format_costs(&costs)),
+            Err(error) => {
+                tracing::warn!(error = %error, "7DTD billing query failed after stop");
+                format!(
+                    "{message}\n料金情報は取得できなかったのだ。Billing export を確認してほしいのだ。"
+                )
+            }
+        }
     }
 }
 
-async fn tcp_ready(ip: &str, port: u16) -> bool {
-    tokio::time::timeout(Duration::from_secs(2), TcpStream::connect((ip, port)))
-        .await
-        .map(|r| r.is_ok())
-        .unwrap_or(false)
-}
 fn optional_env(name: &str) -> Option<String> {
     env::var(name).ok().filter(|v| !v.trim().is_empty())
 }
@@ -278,6 +313,41 @@ fn uptime_minutes(status: &InstanceStatus, now: DateTime<Utc>) -> Option<i64> {
         .as_deref()
         .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
         .map(|started| (now - started.with_timezone(&Utc)).num_minutes().max(0))
+}
+
+fn instance_is_ready(status: &InstanceStatus, runtime: &GuestRuntimeState) -> bool {
+    if status.state != "RUNNING" || status.external_ip.is_none() || runtime.state != "READY" {
+        return false;
+    }
+    let Some(instance_started) = status
+        .last_start
+        .as_deref()
+        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+    else {
+        return false;
+    };
+    let Some(runtime_started) = DateTime::parse_from_rfc3339(&runtime.started_at).ok() else {
+        return false;
+    };
+    runtime_started >= instance_started
+}
+
+fn format_costs(costs: &CostSummary) -> String {
+    let exported_at = costs
+        .exported_at
+        .as_deref()
+        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+        .map(|value| {
+            value
+                .with_timezone(&chrono_tz::Asia::Tokyo)
+                .format("%Y-%m-%d %H:%M JST")
+                .to_string()
+        })
+        .unwrap_or_else(|| "不明".into());
+    format!(
+        "料金（反映済み概算）: 今月 {} {:.0} / 今年 {} {:.0}\n集計反映時点: {}\n※直近の利用分はまだ反映されていない場合があるのだ。",
+        costs.currency, costs.monthly, costs.currency, costs.yearly, exported_at
+    )
 }
 
 #[cfg(test)]
@@ -431,5 +501,45 @@ mod tests {
             ..running
         };
         assert_eq!(uptime_minutes(&stopped, now), None);
+    }
+
+    #[test]
+    fn ready_state_must_belong_to_current_start() {
+        let status = InstanceStatus {
+            state: "RUNNING".into(),
+            external_ip: Some("203.0.113.10".into()),
+            last_start: Some("2026-08-12T03:00:00Z".into()),
+        };
+        let current = GuestRuntimeState {
+            state: "READY".into(),
+            boot_id: "new-boot".into(),
+            started_at: "2026-08-12T03:00:01Z".into(),
+        };
+        assert!(instance_is_ready(&status, &current));
+
+        let missing_ip = InstanceStatus {
+            external_ip: None,
+            ..status.clone()
+        };
+        assert!(!instance_is_ready(&missing_ip, &current));
+
+        let stale = GuestRuntimeState {
+            started_at: "2026-08-11T03:00:00Z".into(),
+            ..current
+        };
+        assert!(!instance_is_ready(&status, &stale));
+    }
+
+    #[test]
+    fn formats_billing_costs_with_export_time() {
+        assert_eq!(
+            format_costs(&CostSummary {
+                monthly: 1234.4,
+                yearly: 5678.6,
+                currency: "JPY".into(),
+                exported_at: Some("2026-08-12T03:00:00Z".into()),
+            }),
+            "料金（反映済み概算）: 今月 JPY 1234 / 今年 JPY 5679\n集計反映時点: 2026-08-12 12:00 JST\n※直近の利用分はまだ反映されていない場合があるのだ。"
+        );
     }
 }
